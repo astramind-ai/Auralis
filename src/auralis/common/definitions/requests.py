@@ -118,6 +118,7 @@ class TTSRequest:
     temperature: float = 0.75
     top_p: float = 0.85
     top_k: int = 50
+    seed: int = 0
     repetition_penalty: float = 5.0
     length_penalty: float = 1.0
     do_sample: bool = True
@@ -130,6 +131,9 @@ class TTSRequest:
         self.processor = EnhancedAudioProcessor(self.audio_config)
         if isinstance(self.speaker_files, list) and self.enhance_speech:
             self.speaker_files = [self.preprocess_audio(f, self.audio_config) for f in self.speaker_files]
+        if self.seed == 0:
+            return
+        torch.manual_seed(self.seed)
 
     def infer_language(self):
         if self.language == '':
