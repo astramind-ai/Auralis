@@ -1,19 +1,20 @@
-import argparse
+#  Copyright (c) 2024 Astramind. Licensed under Apache License, Version 2.0.
 
+import argparse
 import base64
 import json
 import logging
 import uuid
-from typing import  Optional
+from typing import Optional
 
 import aiohttp
 import uvicorn
+from auralis.common.definitions.openai import VoiceChatCompletionRequest, AudioSpeechGenerationRequest
 from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
 from auralis.core.tts import TTS
-from auralis.common.definitions.openai import VoiceChatCompletionRequest, AudioSpeechGenerationRequest
 
 app = FastAPI()
 

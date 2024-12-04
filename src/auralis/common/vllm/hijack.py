@@ -1,9 +1,10 @@
+#  Copyright (c) 2024 Astramind. Licensed under Apache License, Version 2.0.
+
 from typing import List, Optional
 
 import torch
-from vllm import SamplingParams
-
 from auralis.models.xttsv2.components.vllm.hidden_state_collector import HiddenStatesCollector
+from vllm import SamplingParams
 
 
 class ExtendedSamplingParams(SamplingParams, kw_only=True):

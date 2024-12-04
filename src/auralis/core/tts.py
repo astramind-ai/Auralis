@@ -1,3 +1,5 @@
+#  Copyright (c) 2024 Astramind. Licensed under Apache License, Version 2.0.
+
 import asyncio
 import json
 import logging
@@ -6,16 +8,16 @@ import queue
 import threading
 import time
 import uuid
-from concurrent.futures import Future
 from functools import partial
 from typing import AsyncGenerator, Optional, Dict, Union, Generator, List
+
+from auralis.common.definitions.scheduler.orchestrator import Orchestrator
 from huggingface_hub import hf_hub_download
 
+from auralis.common.definitions.dto.output import TTSOutput
+from auralis.common.definitions.dto.requests import TTSRequest
 from auralis.common.logging.logger import setup_logger, set_vllm_logging_level
-from auralis.common.definitions.output import TTSOutput
-from auralis.common.definitions.requests import TTSRequest
 from auralis.common.metrics.performance import track_generation
-from auralis.common.scheduling.two_phase_scheduler import TwoPhaseScheduler
 from auralis.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
 
 
@@ -23,10 +25,9 @@ class TTS:
     def __init__(self, scheduler_max_concurrency: int = 10, vllm_logging_level=logging.DEBUG):
         set_vllm_logging_level(vllm_logging_level)
 
-        self.scheduler: Optional[TwoPhaseScheduler] = TwoPhaseScheduler(scheduler_max_concurrency)
+        self.orchestrator: Optional[Orchestrator] = None
         self.tts_engine: Optional[BaseAsyncTTSEngine] = None
         self.concurrency = scheduler_max_concurrency
-        self.max_vllm_memory: Optional[int] = None
         self.logger = setup_logger(__file__)
 
         self.loop = asyncio.new_event_loop()
@@ -41,7 +42,7 @@ class TTS:
 
     def from_pretrained(self, model_name_or_path: str, **kwargs):
         """Load a pretrained model."""
-        from auralis.models.registry import MODEL_REGISTRY
+        from auralis.models.registry import ModelRegistry
 
         try:
             with open(os.path.join(model_name_or_path, 'config.json'), 'r') as f:
@@ -59,6 +60,12 @@ class TTS:
         self.tts_engine = MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
 
         return self
+
+    def start_orchestrator(self):
+        self.orchestrator = Orchestrator(self.tts_engine.conditioning_pase,
+                                         self.tts_engine.phonetics_phase,
+                                         self.tts_engine.synthesis_phase)
+
     async def prepare_for_streaming_generation(self, request: TTSRequest):
         conditioning_config = self.tts_engine.conditioning_config
         if conditioning_config.speaker_embeddings or conditioning_config.gpt_like_decoder_conditioning:
@@ -140,11 +147,8 @@ class TTS:
         async def process_chunks():
             chunks = []
             try:
-                async for chunk in self.scheduler.run(
+                async for chunk in self.orchestrator.run(
                         inputs=request,
-                        request_id=request.request_id,
-                        first_phase_fn=self._prepare_generation_context,
-                        second_phase_fn=self._second_phase_fn
                 ):
                     if request.stream:
                         yield chunk
@@ -183,7 +187,7 @@ class TTS:
 
         async def process_subrequest(idx, sub_request, queue: Optional[asyncio.Queue] = None):
             chunks = []
-            async for chunk in self.scheduler.run(
+            async for chunk in self.orchestrator.run(
                     inputs=sub_request,
                     request_id=sub_request.request_id,
                     first_phase_fn=self._prepare_generation_context,
@@ -249,7 +253,7 @@ class TTS:
         async def produce():
             try:
                 for sub_request in requests:
-                    async for chunk in self.scheduler.run(
+                    async for chunk in self.orchestrator.run(
                             inputs=sub_request,
                             request_id=sub_request.request_id,
                             first_phase_fn=self._prepare_generation_context,
@@ -285,18 +289,15 @@ class TTS:
     async def _process_requests(self, requests):
         chunks = []
         for sub_request in requests:
-            async for chunk in self.scheduler.run(
+            async for chunk in self.orchestrator.run(
                     inputs=sub_request,
-                    request_id=sub_request.request_id,
-                    first_phase_fn=self._prepare_generation_context,
-                    second_phase_fn=self._second_phase_fn
             ):
                 chunks.append(chunk)
         return TTSOutput.combine_outputs(chunks)
 
     async def shutdown(self):
-        if self.scheduler:
-            await self.scheduler.shutdown()
+        if self.orchestrator:
+            await self.orchestrator.shutdown()
         if self.tts_engine and hasattr(self.tts_engine, 'shutdown'):
             await self.tts_engine.shutdown()
         self.loop.call_soon_threadsafe(self.loop.stop())

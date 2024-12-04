@@ -1,10 +1,12 @@
+#  Copyright (c) 2024 Astramind. Licensed under Apache License, Version 2.0.
+
 import base64
 from dataclasses import fields
+from typing import List, Optional, Dict, Any, Literal
 
-from openai import OpenAI
-from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import List, Optional, Dict, Any, Literal, Union
-from auralis.common.definitions.requests import TTSRequest
+from pydantic import BaseModel, Field, field_validator
+
+from auralis.common.definitions.dto.requests import TTSRequest
 
 
 class ChatCompletionMessage(BaseModel):

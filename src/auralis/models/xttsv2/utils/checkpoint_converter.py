@@ -1,10 +1,11 @@
-import os
-import argparse
+#  Copyright (c) 2024 Astramind. Licensed under Apache License, Version 2.0.
 
-import requests
+import argparse
+import os
+
 import torch
-from safetensors.torch import save_file
 from huggingface_hub import snapshot_download
+from safetensors.torch import save_file
 
 
 def download_repo_files(repo_id, output_path, exclude_extensions=['.safetensors']):

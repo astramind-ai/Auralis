@@ -1,5 +1,8 @@
+#  Copyright (c) 2024 Astramind. Licensed under Apache License, Version 2.0.
+
 from dataclasses import asdict, dataclass
 from typing import Dict, Optional, List
+
 from transformers.configuration_utils import PretrainedConfig
 from transformers.utils import logging
 

@@ -1,8 +1,11 @@
+#  Copyright (c) 2024 Astramind. Licensed under Apache License, Version 2.0.
+
 import threading
-from typing import Optional, Dict, List, Callable
-import torch
-from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
+from typing import Optional, Dict, List, Callable
+
+import torch
 
 from auralis.common.logging.logger import setup_logger
 
