@@ -831,21 +831,22 @@ class XTTSTokenizerFast(PreTrainedTokenizerFast):
         # Preprocess each text in the batch with its corresponding language
         processed_texts = []
         for text, text_lang in zip(batch_text_or_text_pairs, lang):
-            if isinstance(text, str):
+            text_lang = "zh-cn" if text_lang == "zh" else text_lang
+            if isinstance(text, str) and text_lang != "zh-cn":
                 # Check length and preprocess
                 #self.check_input_length(text, text_lang)
                 processed_text = self.preprocess_text(text, text_lang)
 
                 # Format text with language tag and spaces
                 base_lang = text_lang.split("-")[0]
-                lang_code = "zh-cn" if base_lang == "zh" else base_lang
-                processed_text = f"[{lang_code}]{processed_text}"
+                # lang_code = "zh-cn" if base_lang == "zh" else base_lang
+                processed_text = f"[{base_lang}]{processed_text}"
                 processed_text = processed_text.replace(" ", "[SPACE]")
 
                 processed_texts.append(processed_text)
             else:
                 processed_texts.append(text)
-
+                
         # Call the parent class's encoding method with processed texts
         return super()._batch_encode_plus(
             processed_texts,
