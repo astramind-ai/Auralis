@@ -40,6 +40,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     """Async XTTS model implementation using VLLM's AsyncEngine."""
 
     model_type: "xtts"
+    uses_vllm = True
 
     def __init__(self,
                  hifi_config: XTTSConfig,
@@ -50,7 +51,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         super().__init__()
 
         self.max_gb_for_vllm_model = None
-
         self.logger = setup_logger(__file__)
         self.logger.info("Initializing XTTSv2Engine...")
 
