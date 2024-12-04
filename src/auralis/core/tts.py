@@ -57,6 +57,7 @@ class TTS:
                 raise ValueError(f"Could not load model from {model_name_or_path} neither locally or online: {e}")
 
         self.tts_engine = MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
+
         return self
     async def prepare_for_streaming_generation(self, request: TTSRequest):
         conditioning_config = self.tts_engine.conditioning_config
