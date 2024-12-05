@@ -9,7 +9,7 @@ from typing import Optional
 
 import aiohttp
 import uvicorn
-from auralis.common.definitions.openai import VoiceChatCompletionRequest, AudioSpeechGenerationRequest
+from auralis.common.definitions.protocols.openai import VoiceChatCompletionRequest, AudioSpeechGenerationRequest
 from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse

@@ -16,6 +16,7 @@ import librosa
 import soundfile as sf
 from cachetools import LRUCache
 
+from auralis.common.definitions.scheduler.batches import BatchableItem
 from auralis.common.logging.logger import setup_logger
 from auralis.common.definitions.enhancer import EnhancedAudioProcessor, AudioPreprocessingConfig
 
@@ -94,7 +95,7 @@ def validate_language(language: str) -> SupportedLanguages:
     return language # type: ignore
 
 @dataclass
-class TTSRequest:
+class TTSRequest(BatchableItem):
     """Container for TTS inference request data"""
     # Request metadata
     text: Union[AsyncGenerator[str, None], str, List[str]] = None
@@ -103,7 +104,7 @@ class TTSRequest:
     context_partial_function: Optional[Callable] = None
 
     start_time: Optional[float] = None
-    enhance_speech: bool = True
+    enhance_speech: bool = False
     audio_config: AudioPreprocessingConfig = field(default_factory=AudioPreprocessingConfig)
     language: SupportedLanguages = "auto"
     request_id: str = field(default_factory=lambda: uuid.uuid4().hex)
@@ -156,6 +157,12 @@ class TTSRequest:
                            f"We hard limit this to 60 seconds.") # FIXME(mlinmg): for xttsv2 might need adjustments later
             self.max_ref_length = 60
 
+    def length(self, key: str = None):
+        match key:
+            case 'conditioning_phase':
+                return len(self.text) if self.text else 0
+            case 'phonetic_phase':
+                return len(self.speaker_files) if self.speaker_files else 0
 
 
     def infer_language(self):

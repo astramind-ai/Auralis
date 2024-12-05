@@ -7,6 +7,7 @@ from async_timeout import timeout
 import inspect
 
 from auralis import TTSRequest, setup_logger, TTSOutput
+from auralis.common.definitions.scheduler.batches import BatchableItem, BatchedItems
 from auralis.common.definitions.scheduler.context import GenerationContext
 from auralis.common.definitions.types.orchestrator import BatcherFunction
 
@@ -35,24 +36,24 @@ class AsyncDynamicBatcher:
     #    self.max_size = max_batch_size
 
     async def create_batch(self,
-                           queue: asyncio.Queue[Union[TTSRequest, GenerationContext]]
-                           ) -> Optional[Union[TTSRequest, GenerationContext]]:
+                           queue: asyncio.Queue[BatchableItem]
+                           ) -> Optional[BatchedItems]:
         """Create batch from queue items, considering size and wait time"""
         if queue.empty():
             return None
 
-        items = []
+        items = BatchedItems(self.process.__name__)
         try:
             # Get first item immediately
-            items.append(await queue.get())
+            items.batch(await queue.get())
             if self.is_vllm:
                 return items
             # Try to get more items up to max_size or timeout
             async with timeout(self.max_wait):
-                while len(items) < self.max_size:
+                while items.length < self.max_size:
                     if queue.empty():
                         break
-                    items.append(await queue.get())
+                    items.batch(await queue.get())
 
         except TimeoutError:
             pass  # We'll process whatever we got

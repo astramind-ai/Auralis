@@ -15,6 +15,7 @@ class AsyncScheduler:
         self.output_queue: asyncio.Queue[[Union[GenerationContext, AsyncGenerator[TTSRequest, None]]]]= asyncio.Queue()
 
     async def process(self):
+
         while True:
             batch = await self.batcher.create_batch(self.input_queue)
             if not batch:

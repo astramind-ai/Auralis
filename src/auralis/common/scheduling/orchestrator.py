@@ -42,12 +42,12 @@ class Orchestrator:
         #    dtype=dtype
         #)
         # Start scheduler processing tasks
+        self.scheduler_tasks = []
+
+    async def start_schedulers(self):
         self.scheduler_tasks = [
-            asyncio.create_task(s.process())
-            for s in self.schedulers
+            asyncio.create_task(s.process()) for s in self.schedulers
         ]
-
-
 
     @track_generation
     async def _track_yield(self, yieldable: AsyncGenerator[TTSOutput, None]):
@@ -55,6 +55,8 @@ class Orchestrator:
 
     async def run(self, request: TTSRequest) -> AsyncGenerator[TTSOutput, None]:
         """Main entry point - clients submit items and get results"""
+        if len(self.scheduler_tasks) == 0:
+            await self.start_schedulers()
         logger.info(f"Starting request {request.request_id}")
         await self.schedulers[0].input_queue.put(request)
 

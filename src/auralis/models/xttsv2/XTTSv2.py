@@ -29,6 +29,7 @@ from ..base import BaseAsyncTTSEngine
 from ..registry import register_tts_model, SupportedModelTypes
 from ...common.definitions.dto.output import TTSOutput
 from ...common.definitions.dto.requests import TTSRequest
+from ...common.definitions.scheduler.batches import BatchedItems
 from ...common.definitions.scheduler.context import GenerationContext
 from ...common.definitions.types.generator import Tokens
 from ...common.logging.logger import setup_logger
@@ -466,10 +467,11 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             return text, [token_embeds.unsqueeze(0) for token_embeds in list((await embed_tokens(text.to(self.text_embedding.weight.device)))[0])]
 
 
-    async def prepare_inputs_async(self, text: str, language: str, speaker_file: List[Union[str, Path]],
-                                   max_ref_length: int, gpt_cond_len: int, gpt_cond_chunk_len: int, split_text: bool,
-                                   profiling_data:Dict=None) \
-            -> Tuple[List[List[int]], List[torch.Tensor], torch.Tensor]:
+    async def prepare_inputs_async(self, request: BatchedItems) -> Tuple[List[List[int]], List[torch.Tensor], torch.Tensor]:
+        #text: str, language: str, speaker_file: List[Union[str, Path]],
+        #                           max_ref_length: int, gpt_cond_len: int, gpt_cond_chunk_len: int, split_text: bool,
+        #                           profiling_data:Dict=None) \
+        # TODO make this so that it accepts batched inputs
         """Prepare input text with conditioning tokens. Return combined conditioning latents"""
         # Tokenize text based on the language
         text_tokens, text_embeddings = await self.prepare_text_tokens_async(text or profiling_data['text'], language, split_text)
@@ -572,21 +574,14 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         return self.final_norm(hidden_states[start_of_audio_hs:-5, ...].unsqueeze(0).to(self.device).to(self.dtype))
 
     async def conditioning_phase(self,
-                                     request: TTSRequest,
+                                     request: BatchedItems,
                                      #gpt_cond_latent: Optional[torch.Tensor] = None,
                                      #speaker_embeddings: Optional[torch.Tensor] = None,
                                      ) -> Optional[List[GenerationContext]]:
         #if gpt_cond_latent is None or speaker_embeddings is None: # TODO to be re-enabled for streming efficency
         # Prepare input with conditioning
         tokens_list, gpt_embed_inputs, speaker_embeddings = await self.prepare_inputs_async(
-            request.text,
-            request.language,
-            request.speaker_files,
-            request.max_ref_length,
-            request.gpt_cond_len,
-            request.gpt_cond_chunk_len,
-            split_text=True,  # Split text to avoid OOM on big texts
-            profiling_data=request._data_for_profiling
+            request
         )
         if request._data_for_profiling is not None:
             return # we are profiling

@@ -4,11 +4,14 @@ import uuid
 from dataclasses import dataclass
 from typing import Optional
 
+from auralis.common.definitions.scheduler.batches import BatchableItem
 from auralis.common.definitions.types.generator import Tokens, SpeakerEmbeddings, DecodingEmbeddingsModifier, \
     Spectrogram
 
+
+
 @dataclass
-class GenerationContext:
+class GenerationContext(BatchableItem):
     request_id: Optional[str] = None
     start_time: Optional[float] = None
     text: Optional[str] = None
@@ -28,6 +31,10 @@ class GenerationContext:
             self.request_id = str(uuid.uuid4())
         if self.start_time is None:
             self.start_time = time.time()
+
+    @property
+    def length(self):
+        return
 
     @classmethod
     def from_request(self, request, **kwargs):
