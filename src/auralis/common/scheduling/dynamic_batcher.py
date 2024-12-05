@@ -11,10 +11,12 @@ from auralis.common.definitions.scheduler.context import GenerationContext
 logger = setup_logger(__name__)
 
 class AsyncDynamicBatcher:
-    # TODO: make so that if the model has a vllm component the batchsize will be 1 since
-    #  we don't actually batch vllm request and as soon as they're ready they need to exit the queue
+    """
+    Dynamic batcher for async functions
+    """
     def __init__(self, fn: Callable[[List[Any]], Any], max_wait: float = 0.1, has_vllm: bool= False):
         self.max_size = None # we'll wait to profile this
+        self.is_vllm = has_vllm
         self.max_wait = max_wait
         self.process = fn
         # inspect if the fn is async
@@ -36,9 +38,10 @@ class AsyncDynamicBatcher:
         try:
             # Get first item immediately
             items.append(await queue.get())
-
+            if self.is_vllm:
+                return items
             # Try to get more items up to max_size or timeout
-            async with timeout(self.max_wait): # TODO here we should actually use a counter for the correct size of the queue
+            async with timeout(self.max_wait):
                 while len(items) < self.max_size:
                     if queue.empty():
                         break

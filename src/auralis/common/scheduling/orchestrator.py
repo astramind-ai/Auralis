@@ -4,11 +4,14 @@ import asyncio
 from collections.abc import AsyncGenerator
 from typing import Callable, Tuple, Optional
 
+import torch
+
 from auralis import TTSOutput, setup_logger
 from auralis.common.definitions.dto.requests import TTSRequest
 from auralis.common.definitions.types.scheduler import FakeFactoriesForSchedulerProfiling
 from auralis.common.metrics.performance import track_generation
 from auralis.common.scheduling.dynamic_batcher import AsyncDynamicBatcher
+from auralis.common.scheduling.memory_manager import AuralisMemoryManager
 from auralis.common.scheduling.scheduler import AsyncScheduler
 
 logger = setup_logger(__name__)
@@ -16,6 +19,7 @@ logger = setup_logger(__name__)
 
 class Orchestrator:
     def __init__(self,
+                 dtype: torch.dtype,
                  conditioning_phase_fn: Callable,
                  phonetics_phase_fn: Callable,
                  synthesis_phase_fn: Callable,
@@ -27,8 +31,12 @@ class Orchestrator:
             AsyncScheduler(AsyncDynamicBatcher(synthesis_phase_fn))
         ]
 
-        self.profile(fake_data_factories)
+        memory_shapes = self.profile(fake_data_factories)
 
+        self.memory_manager = AuralisMemoryManager(
+            memory_shapes,
+            dtype=dtype
+        )
         # Start scheduler processing tasks
         self.scheduler_tasks = [
             asyncio.create_task(s.process())
@@ -37,6 +45,7 @@ class Orchestrator:
 
     def profile(self, fake_data_factories: FakeFactoriesForSchedulerProfiling):
         logger.info(f"Starting Auralis profiling...")
+        pass
         raise NotImplementedError
 
     @track_generation

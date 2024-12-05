@@ -7,7 +7,11 @@ import numpy as np
 import logging
 from asyncio import Lock
 
+from auralis import setup_logger
 from auralis.common.definitions.scheduler.memory_manager import Block, PagedAllocation
+
+logger = setup_logger(__name__)
+
 
 class AuralisMemoryManager:
     """
@@ -20,12 +24,9 @@ class AuralisMemoryManager:
         shapes: List[Tuple[int, int, int]],  # e.g., [(batch, seq, hidden), ...]
         device: str = 'cuda',
         dtype: torch.dtype = torch.float32,
-        logger: Optional[logging.Logger] = None
     ):
         self.device = torch.device(device)
         self.dtype = dtype
-        self.logger = logger or logging.getLogger(__name__)
-        self.logger.setLevel(logging.INFO)
         self.shapes = shapes
 
         # Determine max size from given shapes
@@ -61,7 +62,7 @@ class AuralisMemoryManager:
         self.allocations: Dict[int, PagedAllocation] = {}
         self._lock = Lock()
 
-        self.logger.info(
+        logger.info(
             f"AuralisMemoryManager initialized with total size {self.total_size} bytes"
         )
 
@@ -74,7 +75,7 @@ class AuralisMemoryManager:
         async with self._lock:
             blk = await self._get_free_block(block_size)
             if blk is None:
-                self.logger.error(f"Allocation failed for shape {shape}")
+                logger.error(f"Allocation failed for shape {shape}")
                 return None
 
             offset, _ = blk
@@ -136,7 +137,7 @@ class AuralisMemoryManager:
                 if self.device.type == 'cuda':
                     torch.cuda.empty_cache()
             except Exception as e:
-                self.logger.error(f"Cleanup error: {e}")
+                logger.error(f"Cleanup error: {e}")
 
     # Buddy allocator internals
     async def _get_free_block(self, size: int) -> Optional[Tuple[int, int]]:
