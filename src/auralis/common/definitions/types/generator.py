@@ -10,3 +10,4 @@ Tokens = List[Token]
 SpeakerEmbeddings = torch.Tensor
 DecodingEmbeddingsModifier = torch.Tensor
 Spectrogram = Union[torch.Tensor, List[torch.Tensor]]
+

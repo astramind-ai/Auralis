@@ -231,7 +231,9 @@ class HifiganGenerator(torch.nn.Module):
         """
         with torch.no_grad():
             with torch.amp.autocast('cuda'):
-                x = self.conv_pre(x).unsqueeze(0)
+                if x.dim() == 2:
+                    x = x.unsqueeze(0)
+                x = self.conv_pre(x)
                 if hasattr(self, "cond_layer"):
                     x.add_(self.cond_layer(g))
                 for i in range(self.num_upsamples):
@@ -638,6 +640,7 @@ class HifiDecoder(torch.nn.Module):
             mode="linear",
             align_corners=False,
         ).squeeze(1)
+
         # upsample to the right sr
         if self.output_sample_rate != self.input_sample_rate:
             z = torch.nn.functional.interpolate(

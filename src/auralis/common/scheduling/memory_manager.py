@@ -22,6 +22,7 @@ class AuralisMemoryManager:
     def __init__(
         self,
         shapes: List[Tuple[int, int, int]],  # e.g., [(batch, seq, hidden), ...]
+        available_memory: int, # in bytes
         device: str = 'cuda',
         dtype: torch.dtype = torch.float32,
     ):

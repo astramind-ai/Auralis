@@ -31,9 +31,9 @@ class TTSOutput:
 
     def __post_init__(self):
         if isinstance(self.array, bytes):
-            self.array = np.frombuffer(self.array, dtype=np.int16)
+            self.array = np.frombuffer(self.array, dtype=np.float32)
             #normalize in the range
-            self.array = self.array.astype(np.float32) / 32768.0
+            self.array = self.array / 32768.0
             fade_length = 100
             fade_in = np.linspace(0, 1, fade_length)
             self.array[:fade_length] *= fade_in

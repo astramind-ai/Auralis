@@ -9,15 +9,17 @@ from dataclasses import asdict, field
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Union, AsyncGenerator, Optional, List, Literal, get_args, Callable
+from typing import Union, AsyncGenerator, Optional, List, Literal, get_args, Callable, Dict
 
 import langid
 import librosa
 import soundfile as sf
 from cachetools import LRUCache
 
-from auralis.models.registry import SupportedModelTypes
+from auralis.common.logging.logger import setup_logger
+from auralis.common.definitions.enhancer import EnhancedAudioProcessor, AudioPreprocessingConfig
 
+logger = setup_logger(__name__)
 
 def hash_params(*args, **kwargs):
     """Create a hash from the parameters"""
@@ -52,7 +54,6 @@ def cached_processing(maxsize=128):
 
     return decorator
 
-from auralis.common.definitions.enhancer import EnhancedAudioProcessor, AudioPreprocessingConfig
 
 SupportedLanguages = Literal[
         "en",
@@ -96,9 +97,9 @@ def validate_language(language: str) -> SupportedLanguages:
 class TTSRequest:
     """Container for TTS inference request data"""
     # Request metadata
-    text: Union[AsyncGenerator[str, None], str, List[str]]
+    text: Union[AsyncGenerator[str, None], str, List[str]] = None
 
-    speaker_files: Union[Union[str,List[str]], Union[bytes,List[bytes]]]
+    speaker_files: Union[Union[str,List[str]], Union[bytes,List[bytes]]] = None
     context_partial_function: Optional[Callable] = None
 
     start_time: Optional[float] = None
@@ -123,15 +124,39 @@ class TTSRequest:
     length_penalty: float = 1.0
     do_sample: bool = True
 
+    # those values serve for profiling and should not be instantiated during the model execution
+    _data_for_profiling: Optional[Dict] = None
+
+    def _validation_for_model(self):
+         pass
+        # for now just a placeholder, but it'll check form the model registry some predefined values
+
     def __post_init__(self):
+        if self._data_for_profiling:
+            return
+        elif self._data_for_profiling is None and (self.text is None or self.speaker_files is None):
+            raise ValueError("Both text and speaker_files must be set")
 
         if self.language == 'auto' and len(self.text) > 0:
             self.language = get_language(self.text)
 
         validate_language(self.language)
         self.processor = EnhancedAudioProcessor(self.audio_config)
+
         if isinstance(self.speaker_files, list) and self.enhance_speech:
+            if len(self.speaker_files) > 5:
+                logger.warning(f"You provided alist of {len(self.speaker_files)} speaker files "
+                               f"but only 5 are supported. we'll take the first 5.")
+                self.speaker_files = self.speaker_files[:5]  # FIXME(mlinmg): for xttsv2 might need adjustments later
+
             self.speaker_files = [self.preprocess_audio(f, self.audio_config) for f in self.speaker_files]
+
+        if self.max_ref_length > 60:
+            logger.warning(f"Maximum reference length is set to {self.max_ref_length}. "
+                           f"We hard limit this to 60 seconds.") # FIXME(mlinmg): for xttsv2 might need adjustments later
+            self.max_ref_length = 60
+
+
 
     def infer_language(self):
         if self.language == 'auto':

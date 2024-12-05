@@ -27,7 +27,7 @@ class TTS:
 
         self.orchestrator: Optional[Orchestrator] = None
         self.tts_engine: Optional[BaseAsyncTTSEngine] = None
-        self.concurrency = scheduler_max_concurrency
+        self.concurrency = scheduler_max_concurrency # kept for backwards compatibility
         self.logger = setup_logger(__file__)
 
         self.loop = asyncio.new_event_loop()
@@ -50,10 +50,7 @@ class TTS:
         ]
 
     def _start_orchestrator(self):
-        self.orchestrator = Orchestrator(self.tts_engine.conditioning_pase,
-                                         self.tts_engine.phonetics_phase,
-                                         self.tts_engine.synthesis_phase,
-                                         self.tts_engine.fake_data_factories)
+        self.orchestrator = Orchestrator(self.tts_engine)
 
     def _run_event_loop(self):
         asyncio.set_event_loop(self.loop)
@@ -172,7 +169,8 @@ class TTS:
 
             except Exception as e:
                 raise ValueError(f"Could not load model from {model_name_or_path} neither locally or online: {e}")
-
+        if kwargs.get('scheduler_max_concurrency', None) is None:
+            kwargs['scheduler_max_concurrency'] =  self.concurrency
         self.tts_engine = ModelRegistry.get_model_class(config['model_type']).from_pretrained(model_name_or_path, **kwargs)
         self.tts_engine.info = ModelRegistry.get_model_info(config['model_type'])
 

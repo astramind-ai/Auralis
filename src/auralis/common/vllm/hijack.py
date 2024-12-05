@@ -3,7 +3,7 @@
 from typing import List, Optional
 
 import torch
-from auralis.models.xttsv2.components.vllm.hidden_state_collector import HiddenStatesCollector
+from auralis.common.vllm.hidden_state_collector import HiddenStatesCollector
 from vllm import SamplingParams
 
 

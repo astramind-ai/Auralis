@@ -45,6 +45,7 @@ setup(
         "hangul_romanize",
         "huggingface_hub",
         "ipython",
+        "langid",
         "librosa",
         "networkx",
         "num2words",

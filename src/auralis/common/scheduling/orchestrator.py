@@ -8,45 +8,46 @@ import torch
 
 from auralis import TTSOutput, setup_logger
 from auralis.common.definitions.dto.requests import TTSRequest
-from auralis.common.definitions.types.scheduler import FakeFactoriesForSchedulerProfiling
 from auralis.common.metrics.performance import track_generation
 from auralis.common.scheduling.dynamic_batcher import AsyncDynamicBatcher
-from auralis.common.scheduling.memory_manager import AuralisMemoryManager
+from auralis.common.scheduling.profiler import Profiler
 from auralis.common.scheduling.scheduler import AsyncScheduler
+from auralis.models.base import BaseAsyncTTSEngine
 
 logger = setup_logger(__name__)
 
 
 class Orchestrator:
     def __init__(self,
-                 dtype: torch.dtype,
-                 conditioning_phase_fn: Callable,
-                 phonetics_phase_fn: Callable,
-                 synthesis_phase_fn: Callable,
-                 fake_data_factories: FakeFactoriesForSchedulerProfiling):
-
+                 engine: BaseAsyncTTSEngine):
+        conditioning_phase_fn = engine.conditioning_phase
+        phonetics_phase_fn = engine.phonetic_phase
+        synthesis_phase_fn = engine.speech_phase
+        fake_data_factories = engine.info['fake_data_factories']
+        eng_config = engine.config
+        concurrences = eng_config['concurrences']
         self.schedulers = [
-            AsyncScheduler(AsyncDynamicBatcher(conditioning_phase_fn)),
-            AsyncScheduler(AsyncDynamicBatcher(phonetics_phase_fn, fake_data_factories[1] is None)), # this means the fonetic phase is managed by vllm
-            AsyncScheduler(AsyncDynamicBatcher(synthesis_phase_fn))
+            AsyncScheduler(AsyncDynamicBatcher(conditioning_phase_fn, max_size=concurrences[0])),
+            AsyncScheduler(AsyncDynamicBatcher(phonetics_phase_fn, max_size=concurrences[1], has_vllm=fake_data_factories[1] is None)), # this means the fonetic phase is managed by vllm
+            AsyncScheduler(AsyncDynamicBatcher(synthesis_phase_fn, max_size=concurrences[2]))
         ]
 
-        memory_shapes = self.profile(fake_data_factories)
+        Profiler.profile(fake_data_factories,
+                             (conditioning_phase_fn, phonetics_phase_fn, synthesis_phase_fn), eng_config)
 
-        self.memory_manager = AuralisMemoryManager(
-            memory_shapes,
-            dtype=dtype
-        )
+
+        #self.memory_manager = AuralisMemoryManager( #TODO This will need a much deeper implementation (help needed)
+        #    memory_shapes,
+        #    memory_requirements,
+        #    dtype=dtype
+        #)
         # Start scheduler processing tasks
         self.scheduler_tasks = [
             asyncio.create_task(s.process())
             for s in self.schedulers
         ]
 
-    def profile(self, fake_data_factories: FakeFactoriesForSchedulerProfiling):
-        logger.info(f"Starting Auralis profiling...")
-        pass
-        raise NotImplementedError
+
 
     @track_generation
     async def _track_yield(self, yieldable: AsyncGenerator[TTSOutput, None]):

@@ -10,7 +10,7 @@ class SupportedModelTypes(Enum):
 
 class ModelRegistry:
     _instance = None
-    _models: Dict[SupportedModelTypes, dict] = {}
+    _models: Dict[str, dict] = {}
 
     def __new__(cls):
         if cls._instance is None:
@@ -20,7 +20,7 @@ class ModelRegistry:
     @classmethod
     def register_model(cls, model_type: SupportedModelTypes, config_converter=None, **model_info):
         def decorator(model_class):
-            cls._models[model_type] = {
+            cls._models[model_type.value] = {
                 'class': model_class,
                 'config_converter': config_converter,
                 **model_info
