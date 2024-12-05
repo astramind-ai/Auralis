@@ -17,7 +17,6 @@ class ModelRegistry:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-
     @classmethod
     def register_model(cls, model_type: SupportedModelTypes, config_converter=None, **model_info):
         def decorator(model_class):
@@ -34,6 +33,9 @@ class ModelRegistry:
     def get_model_info(cls, model_type: SupportedModelTypes) -> Optional[dict]:
         return cls._models.get(model_type)
 
+    @classmethod
+    def get_model_class(self, model_type: SupportedModelTypes):
+        return self._models[model_type]['class']
 
 # Decorator to register a model
 def register_tts_model(model_type: SupportedModelTypes, **kwargs):

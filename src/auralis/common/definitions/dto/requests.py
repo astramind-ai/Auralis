@@ -16,6 +16,8 @@ import librosa
 import soundfile as sf
 from cachetools import LRUCache
 
+from auralis.models.registry import SupportedModelTypes
+
 
 def hash_params(*args, **kwargs):
     """Create a hash from the parameters"""

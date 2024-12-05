@@ -17,7 +17,6 @@ class GenerationContext:
     top_p: Optional[float] = None
     top_k: Optional[int] = None
     repetition_penalty: Optional[float] = None
-    is_vllm: Optional[bool] = None
     tokens: Optional[Tokens] = None
     # this is a modifier which will condition the decoding process in a autoregressive decoder only model
     decoding_embeddings_modifier: Optional[DecodingEmbeddingsModifier] = None

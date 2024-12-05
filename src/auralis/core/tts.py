@@ -11,14 +11,14 @@ import uuid
 from functools import partial
 from typing import AsyncGenerator, Optional, Dict, Union, Generator, List
 
-from auralis.common.definitions.scheduler.orchestrator import Orchestrator
+from auralis.common.scheduling.orchestrator import Orchestrator
 from huggingface_hub import hf_hub_download
 
 from auralis.common.definitions.dto.output import TTSOutput
 from auralis.common.definitions.dto.requests import TTSRequest
 from auralis.common.logging.logger import setup_logger, set_vllm_logging_level
 from auralis.common.metrics.performance import track_generation
-from auralis.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
+from auralis.models.base import BaseAsyncTTSEngine
 
 
 class TTS:
@@ -35,137 +35,6 @@ class TTS:
         self.loop_thread.start()
         self._async = None
 
-    def _run_event_loop(self):
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
-
-
-    def from_pretrained(self, model_name_or_path: str, **kwargs):
-        """Load a pretrained model."""
-        from auralis.models.registry import ModelRegistry
-
-        try:
-            with open(os.path.join(model_name_or_path, 'config.json'), 'r') as f:
-                config = json.load(f)
-
-        except FileNotFoundError:
-            try:
-                config_path = hf_hub_download(repo_id=model_name_or_path, filename='config.json')
-                with open(config_path, 'r') as f:
-                    config = json.load(f)
-
-            except Exception as e:
-                raise ValueError(f"Could not load model from {model_name_or_path} neither locally or online: {e}")
-
-        self.tts_engine = MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
-
-        return self
-
-    def start_orchestrator(self):
-        self.orchestrator = Orchestrator(self.tts_engine.conditioning_pase,
-                                         self.tts_engine.phonetics_phase,
-                                         self.tts_engine.synthesis_phase)
-
-    async def prepare_for_streaming_generation(self, request: TTSRequest):
-        conditioning_config = self.tts_engine.conditioning_config
-        if conditioning_config.speaker_embeddings or conditioning_config.gpt_like_decoder_conditioning:
-            gpt_cond_latent, speaker_embeddings = await self.tts_engine.get_audio_conditioning(request.speaker_files)
-            return partial(self.tts_engine.get_generation_context,
-                           gpt_cond_latent=gpt_cond_latent,
-                           speaker_embeddings=speaker_embeddings)
-
-    async def _prepare_generation_context(self, input_request: TTSRequest):
-        """Prepare the generation context for the first phase."""
-        conditioning_config = self.tts_engine.conditioning_config
-        input_request.start_time = time.time()
-        if input_request.context_partial_function:
-            (audio_token_generators, requests_ids,
-             speaker_embeddings,
-             gpt_like_decoder_conditioning) = \
-                await input_request.context_partial_function(input_request)
-        else:
-            audio_token_generators, speaker_embeddings, gpt_like_decoder_conditioning = None, None, None
-
-            if conditioning_config.speaker_embeddings and conditioning_config.gpt_like_decoder_conditioning:
-                (audio_token_generators, requests_ids,
-                 speaker_embeddings,
-                 gpt_like_decoder_conditioning) = await self.tts_engine.get_generation_context(input_request)
-            elif conditioning_config.speaker_embeddings:
-                (audio_token_generators, requests_ids,
-                 speaker_embeddings) = await self.tts_engine.get_generation_context(input_request)
-            elif conditioning_config.gpt_like_decoder_conditioning:
-                (audio_token_generators, requests_ids,
-                 gpt_like_decoder_conditioning) = await self.tts_engine.get_generation_context(input_request)
-            else:
-                audio_token_generators, requests_ids = await self.tts_engine.get_generation_context(input_request)
-
-        parallel_inputs = [
-            {
-                'generator': gen,
-                'speaker_embedding': speaker_embeddings[i] if
-                speaker_embeddings is not None and isinstance(speaker_embeddings, list) else
-                speaker_embeddings if speaker_embeddings is not None else
-                None,
-                'multimodal_data': gpt_like_decoder_conditioning[i] if
-                gpt_like_decoder_conditioning is not None and isinstance(gpt_like_decoder_conditioning, list) else
-                gpt_like_decoder_conditioning if gpt_like_decoder_conditioning is not None else
-                None,
-                'request': input_request,
-            }
-            for i, gen in enumerate(audio_token_generators)
-        ]
-
-        return {
-            'parallel_inputs': parallel_inputs,
-            'request': input_request
-        }
-
-    async def _process_single_generator(self, gen_input: Dict) -> AudioOutputGenerator:
-        """Process a single generator."""
-        try:
-            async for chunk in self.tts_engine.process_tokens_to_speech( # type: ignore
-                    generator=gen_input['generator'],
-                    speaker_embeddings=gen_input['speaker_embedding'],
-                    multimodal_data=gen_input['multimodal_data'],
-                    request = gen_input['request'],
-            ):
-                yield chunk
-        except Exception as e:
-            raise e
-
-    @track_generation
-    async def _second_phase_fn(self, gen_input: Dict) -> AudioOutputGenerator:
-        """Second phase: Generate speech."""
-        async for chunk in self._process_single_generator(gen_input):
-            yield chunk
-
-    async def generate_speech_async(self, request: TTSRequest) -> Union[AsyncGenerator[TTSOutput, None], TTSOutput]:
-        if self._async == False:
-            raise RuntimeError("This instance was not created for async generation.")
-
-        self._async = True
-        async def process_chunks():
-            chunks = []
-            try:
-                async for chunk in self.orchestrator.run(
-                        inputs=request,
-                ):
-                    if request.stream:
-                        yield chunk
-                    chunks.append(chunk)
-            except Exception as e:
-                self.logger.error(f"Error during speech generation: {e}")
-                raise
-
-            if not request.stream:
-                yield TTSOutput.combine_outputs(chunks)
-
-        if request.stream:
-            return process_chunks()
-        else:
-            async for result in process_chunks():
-                return result
-
     @staticmethod
     def split_requests(request: TTSRequest, max_length: int = 100000) -> List[TTSRequest]:
         """Split a request into multiple chunks."""
@@ -173,25 +42,87 @@ class TTS:
             return [request]
 
         text_chunks = [request.text[i:i + max_length]
-                      for i in range(0, len(request.text), max_length)]
+                       for i in range(0, len(request.text), max_length)]
 
         return [
             (copy := request.copy(), setattr(copy, 'text', chunk), setattr(copy, 'request_id', uuid.uuid4().hex))[0]
             for chunk in text_chunks
         ]
 
-    async def _process_multiple_requests(self, requests: List[TTSRequest], results: Optional[List] = None) -> Optional[
-        TTSOutput]:
+    def _start_orchestrator(self):
+        self.orchestrator = Orchestrator(self.tts_engine.conditioning_pase,
+                                         self.tts_engine.phonetics_phase,
+                                         self.tts_engine.synthesis_phase,
+                                         self.tts_engine.fake_data_factories)
+
+    def _run_event_loop(self):
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_forever()
+
+    def _non_streaming_sync_wrapper(self, requests):
+        # Use asyncio.run_coroutine_threadsafe and get a concurrent.futures.Future
+        future = asyncio.run_coroutine_threadsafe(self._process_requests(requests), self.loop)
+        try:
+            return future.result()  # This will block until the result is available
+        except Exception as e:
+            raise e
+
+    def _streaming_sync_wrapper(self, requests):
+        q = queue.Queue()
+
+        async def produce():
+            try:
+                for sub_request in requests:
+                    async for chunk in self.orchestrator.run(
+                            request=sub_request,
+                    ):
+                        q.put(chunk)
+                q.put(None)  # Signal completion
+            except Exception as e:
+                q.put(e)
+                q.put(None)  # Ensure the generator exits
+
+        # Schedule the coroutine in the dedicated event loop
+        future = asyncio.run_coroutine_threadsafe(produce(), self.loop)
+
+        # Return a generator that yields items from the queue
+        def sync_generator():
+            while True:
+                item = q.get()
+                if item is None:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+                yield item
+
+            # Ensure that the coroutine has completed
+            try:
+                future.result()
+            except Exception as e:
+                raise e
+
+        return sync_generator()
+
+    async def _process_requests(self, requests):
+        chunks = []
+        for sub_request in requests:
+            async for chunk in self.orchestrator.run(
+                    request=sub_request,
+            ):
+                chunks.append(chunk)
+        return TTSOutput.combine_outputs(chunks)
+
+    async def _process_multiple_requests(self,
+                                         requests: List[TTSRequest],
+                                         results: Optional[List] = None) -> Optional[TTSOutput]:
         """Process multiple requests in parallel."""
         output_queues = [asyncio.Queue() for _ in requests] if results is not None else None
 
         async def process_subrequest(idx, sub_request, queue: Optional[asyncio.Queue] = None):
             chunks = []
             async for chunk in self.orchestrator.run(
-                    inputs=sub_request,
-                    request_id=sub_request.request_id,
-                    first_phase_fn=self._prepare_generation_context,
-                    second_phase_fn=self._second_phase_fn
+                    request=sub_request,
+
             ):
                 chunks.append(chunk)
                 if queue is not None:
@@ -225,6 +156,66 @@ class TTS:
             complete_audio = [chunk for chunks in all_chunks for chunk in chunks]
             return TTSOutput.combine_outputs(complete_audio)
 
+    def from_pretrained(self, model_name_or_path: str, **kwargs):
+        """Load a pretrained model."""
+        from auralis.models.registry import ModelRegistry
+
+        try:
+            with open(os.path.join(model_name_or_path, 'config.json'), 'r') as f:
+                config = json.load(f)
+
+        except FileNotFoundError:
+            try:
+                config_path = hf_hub_download(repo_id=model_name_or_path, filename='config.json')
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+
+            except Exception as e:
+                raise ValueError(f"Could not load model from {model_name_or_path} neither locally or online: {e}")
+
+        self.tts_engine = ModelRegistry.get_model_class(config['model_type']).from_pretrained(model_name_or_path, **kwargs)
+        self.tts_engine.info = ModelRegistry.get_model_info(config['model_type'])
+
+        self._start_orchestrator()
+
+        return self
+
+
+    async def prepare_for_streaming_generation(self, request: TTSRequest):
+        conditioning_config = self.tts_engine.conditioning_config
+        if conditioning_config.speaker_embeddings or conditioning_config.gpt_like_decoder_conditioning:
+            gpt_cond_latent, speaker_embeddings = await self.tts_engine.get_audio_conditioning(request.speaker_files)
+            return partial(self.tts_engine.get_generation_context,
+                           gpt_cond_latent=gpt_cond_latent,
+                           speaker_embeddings=speaker_embeddings)
+
+    async def generate_speech_async(self, request: TTSRequest) -> Union[AsyncGenerator[TTSOutput, None], TTSOutput]:
+        if self._async == False:
+            raise RuntimeError("This instance was not created for async generation.")
+
+        self._async = True
+        async def process_chunks():
+            chunks = []
+            try:
+                async for chunk in self.orchestrator.run(
+                        request=request,
+                ):
+                    if request.stream:
+                        yield chunk
+                    chunks.append(chunk)
+            except Exception as e:
+                self.logger.error(f"Error during speech generation: {e}")
+                raise
+
+            if not request.stream:
+                yield TTSOutput.combine_outputs(chunks)
+
+        if request.stream:
+            return process_chunks()
+        else:
+            async for result in process_chunks():
+                return result
+
     def generate_speech(self, request: TTSRequest) -> Union[Generator[TTSOutput, None, None], TTSOutput]:
         if self._async == True:
             raise RuntimeError("This instance was created for async generation.")
@@ -238,62 +229,6 @@ class TTS:
         else:
             # Non-streaming case
             return self._non_streaming_sync_wrapper(requests)
-
-    def _non_streaming_sync_wrapper(self, requests):
-        # Use asyncio.run_coroutine_threadsafe and get a concurrent.futures.Future
-        future = asyncio.run_coroutine_threadsafe(self._process_requests(requests), self.loop)
-        try:
-            return future.result()  # This will block until the result is available
-        except Exception as e:
-            raise e
-
-    def _streaming_sync_wrapper(self, requests):
-        q = queue.Queue()
-
-        async def produce():
-            try:
-                for sub_request in requests:
-                    async for chunk in self.orchestrator.run(
-                            inputs=sub_request,
-                            request_id=sub_request.request_id,
-                            first_phase_fn=self._prepare_generation_context,
-                            second_phase_fn=self._second_phase_fn
-                    ):
-                        q.put(chunk)
-                q.put(None)  # Signal completion
-            except Exception as e:
-                q.put(e)
-                q.put(None)  # Ensure the generator exits
-
-        # Schedule the coroutine in the dedicated event loop
-        future = asyncio.run_coroutine_threadsafe(produce(), self.loop)
-
-        # Return a generator that yields items from the queue
-        def sync_generator():
-            while True:
-                item = q.get()
-                if item is None:
-                    break
-                if isinstance(item, Exception):
-                    raise item
-                yield item
-
-            # Ensure that the coroutine has completed
-            try:
-                future.result()
-            except Exception as e:
-                raise e
-
-        return sync_generator()
-
-    async def _process_requests(self, requests):
-        chunks = []
-        for sub_request in requests:
-            async for chunk in self.orchestrator.run(
-                    inputs=sub_request,
-            ):
-                chunks.append(chunk)
-        return TTSOutput.combine_outputs(chunks)
 
     async def shutdown(self):
         if self.orchestrator:

@@ -25,6 +25,7 @@ class TTSOutput:
 
     start_time: Optional[float] = None
     end_time: Optional[float] = None
+    is_finished: bool = False
     token_length: Optional[int] = None
 
 
@@ -338,3 +339,7 @@ class TTSOutput:
                 self.play()
         except Exception as e:
             print(f"Error playing audio: {str(e)}")
+
+    @property
+    def duration(self) -> float:
+        return self.end_time - self.start_time

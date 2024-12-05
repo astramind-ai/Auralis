@@ -1,23 +1,18 @@
 #  Copyright (c) 2024 Astramind. Licensed under Apache License, Version 2.0.
 
 import asyncio
-from dataclasses import dataclass
-from typing import Any
+from typing import Union, AsyncGenerator
 
-
-@dataclass
-class ProcessingItem:
-    data: Any
-    metadata: dict
-    stage: int = 0
+from auralis import TTSRequest
+from auralis.common.definitions.scheduler.context import GenerationContext
 
 
 class AsyncScheduler:
     def __init__(self, batcher, is_streaming=False):
         self.batcher = batcher
         self.is_streaming = is_streaming
-        self.input_queue = asyncio.Queue()
-        self.output_queue = asyncio.Queue()
+        self.input_queue: asyncio.Queue[Union[TTSRequest, GenerationContext]] = asyncio.Queue()
+        self.output_queue: asyncio.Queue[[Union[GenerationContext, AsyncGenerator[TTSRequest, None]]]]= asyncio.Queue()
 
     async def process(self):
         while True:

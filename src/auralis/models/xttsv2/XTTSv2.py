@@ -2,6 +2,7 @@
 
 import asyncio
 import functools
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -40,7 +41,8 @@ from ...common.vllm.hijack import ExtendedSamplingParams, LogitsRepetitionPenali
     uses_vllm=True,
     supported_languages = ['en', 'es', 'fr', 'de', 'it', 'pt', 'pl', 'tr', 'ru',
                            'nl', 'cs', 'ar', 'zh-cn', 'ja', 'hu', 'ko', 'hi'],
-    context_generation_max_length = ()
+
+    context_generation_fake_factory = lambda context: context
 
 
 )
@@ -629,6 +631,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         # yield the audio output
         yield TTSOutput(array= wav,
+                        is_finished = True,
+                        end_time=time.time(),
                         start_time = context.start_time,
                         token_length = len(context.tokens)
                         )
