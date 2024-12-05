@@ -1,19 +1,18 @@
+#  Copyright (c) 2024 Astramind. Licensed under Apache License, Version 2.0.
+
 import functools
 import random
-from array import array
+from collections import defaultdict
 from dataclasses import dataclass
+from typing import Dict, List
+from typing import Optional, Union, Iterable, Tuple, Mapping
 
 import torch
 import torch.nn as nn
-from typing import Optional, Union, Iterable, Tuple, Mapping
-
-from networkx.algorithms.clique import enumerate_all_cliques
 from torch import Tensor
 from transformers import GPT2Config
-from triton.language import dtype
-
 from vllm.attention import AttentionMetadata
-from vllm.config import CacheConfig, MultiModalConfig, VllmConfig
+from vllm.config import CacheConfig, VllmConfig
 from vllm.distributed import get_pp_group
 from vllm.inputs import InputContext, INPUT_REGISTRY, DecoderOnlyInputs, token_inputs, DummyData
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
@@ -22,17 +21,13 @@ from vllm.model_executor.layers.sampler import Sampler, SamplerOutput
 from vllm.model_executor.layers.vocab_parallel_embedding import VocabParallelEmbedding, ParallelLMHead
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.models.gpt2 import GPT2Block
+from vllm.model_executor.models.interfaces import SupportsMultiModal, SupportsPP
 from vllm.model_executor.models.utils import make_layers, make_empty_intermediate_tensors_factory
 from vllm.model_executor.sampling_metadata import SamplingMetadata
-from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalInputs, MultiModalKwargs
+from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalKwargs
 from vllm.multimodal.inputs import PlaceholderRange
 from vllm.multimodal.utils import consecutive_placeholder_ranges
-from vllm.sequence import IntermediateTensors, SequenceData, VLLM_TOKEN_ID_ARRAY_TYPE
-from vllm.model_executor.models.interfaces import SupportsMultiModal, SupportsPP
-
-from typing import Dict, List
-from collections import defaultdict
-
+from vllm.sequence import IntermediateTensors, SequenceData
 from vllm.utils import is_list_of
 
 PrefillLength= Union[int, List[int]]

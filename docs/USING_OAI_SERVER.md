@@ -29,7 +29,7 @@ from openai import OpenAI
   
 client = OpenAI(  
  api_key="your-api-key",  # Can be any string when using local Auralis base_url="http://127.0.0.1:8000/v1/"  # Your Auralis endpoint)  
-with open(reference_audio_path, "rb") as f:  
+with open(reference_audio_path, "rb") as f:  # you can pass a local path for the audio reference path on the server machine
  audio_data = base64.b64encode(f.read()).decode('utf-8')  # Configure speech parameters  
 speech_params = {  
  "enhance_speech": True, "sound_norm_refs": False, "max_ref_length": 60, "gpt_cond_len": 30, "gpt_cond_chunk_len": 4, "temperature": 0.75, "top_p": 0.85, "top_k": 50, "repetition_penalty": 5.0, "length_penalty": 1.0, "do_sample": True, "language": "auto"}  
@@ -51,7 +51,7 @@ This endpoint handles real-time text generation and speech synthesis simultaneou
 #### Python Example  
 ```python  
 with open(reference_audio_path, "rb") as f:  
- audio_data = base64.b64encode(f.read()).decode('utf-8')  # Configure streaming parameters  
+ audio_data = base64.b64encode(f.read()).decode('utf-8')  # you can pass a local path for the audio reference path on the server machine
 streaming_params = {  
  "openai_api_url": "http://your-llm-endpoint:8001/v1/chat/completions", "speaker_files": [audio_data], "vocalize_at_every_n_words": 40, "enhance_speech": True, "sound_norm_refs": False, "max_ref_length": 60, "gpt_cond_len": 30, "gpt_cond_chunk_len": 4, "temperature": 0.75, "top_p": 0.85, "top_k": 50, "repetition_penalty": 5.0, "length_penalty": 1.0, "do_sample": True, "language": "auto"}  
   

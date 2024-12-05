@@ -1,3 +1,5 @@
+#  Copyright (c) 2024 Astramind. Licensed under Apache License, Version 2.0.
+
 from auralis import TTS, TTSRequest
 
 tts = TTS(scheduler_max_concurrency=12).from_pretrained("AstraMindAI/xttsv2", gpt_model='AstraMindAI/xtts2-gpt')

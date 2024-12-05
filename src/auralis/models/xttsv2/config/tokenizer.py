@@ -1,7 +1,10 @@
-import re
-from typing import List, Optional, Union, Dict, Any
-from functools import cached_property
+#  Copyright (c) 2024 Astramind. Licensed under Apache License, Version 2.0.
 
+import re
+from functools import cached_property
+from typing import List, Optional, Union, Dict, Any
+
+import cutlet
 import pypinyin
 import torch
 from hangul_romanize import Transliter
@@ -12,15 +15,14 @@ from spacy.lang.en import English
 from spacy.lang.es import Spanish
 from spacy.lang.ja import Japanese
 from spacy.lang.zh import Chinese
-from transformers import PreTrainedTokenizerFast, BatchEncoding
-from transformers.tokenization_utils_base import TruncationStrategy, PaddingStrategy
 from tokenizers import Tokenizer
 from tokenizers.pre_tokenizers import WhitespaceSplit
 from tokenizers.processors import TemplateProcessing
+from transformers import PreTrainedTokenizerFast, BatchEncoding
+from transformers.tokenization_utils_base import TruncationStrategy, PaddingStrategy
 
 from auralis.models.xttsv2.components.tts.layers.xtts.zh_num2words import TextNorm as zh_num2words
 
-import cutlet
 
 def get_spacy_lang(lang):
     if lang == "zh":

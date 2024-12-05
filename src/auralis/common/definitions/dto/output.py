@@ -1,15 +1,15 @@
+#  Copyright (c) 2024 Astramind. Licensed under Apache License, Version 2.0.
+
 import io
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Union, Optional, Tuple, List
-import sounddevice as sd
-
-from IPython.display import Audio, display
-
 
 import numpy as np
+import sounddevice as sd
 import torch
 import torchaudio
+from IPython.display import Audio, display
 from torio.io import CodecConfig
 
 
@@ -25,14 +25,15 @@ class TTSOutput:
 
     start_time: Optional[float] = None
     end_time: Optional[float] = None
+    is_finished: bool = False
     token_length: Optional[int] = None
 
 
     def __post_init__(self):
         if isinstance(self.array, bytes):
-            self.array = np.frombuffer(self.array, dtype=np.int16)
+            self.array = np.frombuffer(self.array, dtype=np.float32)
             #normalize in the range
-            self.array = self.array.astype(np.float32) / 32768.0
+            self.array = self.array / 32768.0
             fade_length = 100
             fade_in = np.linspace(0, 1, fade_length)
             self.array[:fade_length] *= fade_in
@@ -338,3 +339,7 @@ class TTSOutput:
                 self.play()
         except Exception as e:
             print(f"Error playing audio: {str(e)}")
+
+    @property
+    def duration(self) -> float:
+        return self.end_time - self.start_time

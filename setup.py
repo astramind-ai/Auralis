@@ -1,3 +1,5 @@
+#  Copyright (c) 2024 Astramind. Licensed under Apache License, Version 2.0.
+
 from pathlib import Path
 
 from setuptools import setup, find_packages
@@ -43,6 +45,7 @@ setup(
         "hangul_romanize",
         "huggingface_hub",
         "ipython",
+        "langid",
         "librosa",
         "networkx",
         "num2words",

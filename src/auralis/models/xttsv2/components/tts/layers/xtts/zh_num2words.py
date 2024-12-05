@@ -4,7 +4,6 @@
 
 import argparse
 import csv
-import os
 import re
 import string
 import sys

@@ -1,8 +1,10 @@
-import uuid
-from typing import Any, Dict, AsyncGenerator, Callable, Awaitable, Optional
+#  Copyright (c) 2024 Astramind. Licensed under Apache License, Version 2.0.
+
 import asyncio
 import time
 from contextlib import asynccontextmanager
+from typing import Any, Dict, AsyncGenerator, Callable, Awaitable
+
 from auralis.common.definitions.scheduler import QueuedRequest, TaskState
 from auralis.common.logging.logger import setup_logger
 

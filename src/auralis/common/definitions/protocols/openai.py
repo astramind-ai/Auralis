@@ -1,10 +1,12 @@
+#  Copyright (c) 2024 Astramind. Licensed under Apache License, Version 2.0.
+
 import base64
 from dataclasses import fields
+from typing import List, Optional, Dict, Any, Literal
 
-from openai import OpenAI
-from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import List, Optional, Dict, Any, Literal, Union
-from auralis.common.definitions.requests import TTSRequest
+from pydantic import BaseModel, Field, field_validator
+
+from auralis.common.definitions.dto.requests import TTSRequest
 
 
 class ChatCompletionMessage(BaseModel):
@@ -17,7 +19,7 @@ class VoiceChatCompletionRequest(BaseModel):
     # Chat completion fields
     model: str
     messages: List[ChatCompletionMessage]
-    speaker_files: List[str] = Field(..., description="List of base64-encoded audio files")
+    speaker_files: List[str] = Field(..., description="List of base64-encoded audio or paths to audio files on the server machine")
     modalities: List[Literal["text", "audio"]] = Field(
         default=["text", "audio"],
         description="Output modalities to return"
@@ -112,7 +114,7 @@ class AudioSpeechGenerationRequest(BaseModel):
         # Chat completion fields
         input: str = Field(..., description="The textual input to convert")
         model: str = Field(..., description="The model to use for conversion")
-        voice: List[str] = Field(..., description="List of base64-encoded audio files")
+        voice: List[str] = Field(..., description="List of base64-encoded audios or paths to audio files on the server machine")
         response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] = Field(
             default='mp3', description="List of base64-encoded audio files"
         )
