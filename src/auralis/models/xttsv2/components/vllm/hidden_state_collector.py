@@ -8,17 +8,52 @@ from auralis.common.logging.logger import setup_logger
 
 
 class SyncCollectorWrapper:
-    """Wrapper that provides a sync interface for collection while maintaining thread safety"""
+    """Thread-safe wrapper for synchronous hidden state collection.
+    
+    This wrapper provides a synchronous interface for collecting hidden states
+    while maintaining thread safety. It stores a request ID and collection function,
+    allowing for simplified collection calls that don't require explicit request IDs.
+    """
+
     def __init__(self, collector_fn: Callable[[torch.Tensor, str], None], request_id: str):
+        """Initialize synchronous collector wrapper.
+
+        Args:
+            collector_fn (Callable[[torch.Tensor, str], None]): Function to collect
+                hidden states with request ID.
+            request_id (str): Unique identifier for the collection request.
+        """
         self.collector_fn = collector_fn
         self.request_id = request_id
 
     def __call__(self, hidden_states: Optional[torch.Tensor], request_id: Optional[str] = None):
-        """Sync interface for VLLM - uses stored request_id if none provided"""
+        """Collect hidden states synchronously.
+
+        Args:
+            hidden_states (Optional[torch.Tensor]): Hidden states to collect.
+            request_id (Optional[str], optional): Request identifier. If None,
+                uses the stored request_id. Defaults to None.
+        """
         self.collector_fn(hidden_states, request_id or self.request_id)
 
 class HiddenStatesCollector:
+    """Thread-safe collector for model hidden states.
+    
+    This class manages the collection and retrieval of model hidden states during
+    generation, with support for multiple concurrent requests. It provides thread-safe
+    operations and timeout-based retrieval.
+
+    The collector maintains separate queues and synchronization primitives for each
+    request, allowing for parallel collection of hidden states from different
+    generation processes.
+    """
+
     def __init__(self):
+        """Initialize hidden states collector.
+        
+        Sets up thread-safe data structures for collecting and managing hidden states,
+        including locks, events, and output storage for multiple requests.
+        """
         self.outputs: Dict[str, List[torch.Tensor]] = {}
         self.collection_ready: Dict[str, threading.Event] = {}
         self.collection_complete: Dict[str, threading.Event] = {}
@@ -31,7 +66,14 @@ class HiddenStatesCollector:
         self.executor = ThreadPoolExecutor(max_workers=4)
 
     def initialize_request(self, request_id: str):
-        """Synchronous initialization for request"""
+        """Initialize collection resources for a new request.
+
+        Sets up all necessary synchronization primitives and storage for a new
+        collection request. This method is thread-safe and idempotent.
+
+        Args:
+            request_id (str): Unique identifier for the request.
+        """
         with self.global_lock:
             if request_id not in self.locks:
                 self.locks[request_id] = threading.Lock()
@@ -45,7 +87,19 @@ class HiddenStatesCollector:
                 self.logger.debug(f"Initialized collector for request {request_id}")
 
     def sync_collect(self, hidden_states: Optional[torch.Tensor], request_id: str):
-        """Synchronous collection method for VLLM callback"""
+        """Synchronously collect hidden states for a request.
+
+        This method is called by VLLM to collect hidden states during generation.
+        It handles the thread-safe storage of states and signals completion when
+        all expected states are collected.
+
+        Args:
+            hidden_states (Optional[torch.Tensor]): Hidden states to collect.
+            request_id (str): Request identifier.
+
+        Raises:
+            Exception: If there's an error during collection.
+        """
         if request_id not in self.collection_ready:
             self.logger.error(f"Collector not initialized for request {request_id}")
             # Initialize on demand if needed
@@ -69,7 +123,21 @@ class HiddenStatesCollector:
             raise
 
     async def get_hidden_states(self, request_id: str, timeout: float = 3.0) -> Optional[torch.Tensor]:
-        """Get hidden states for a request with timeout."""
+        """Retrieve collected hidden states for a request.
+
+        This method waits for all hidden states to be collected or until timeout,
+        then concatenates and returns the collected states.
+
+        Args:
+            request_id (str): Request identifier.
+            timeout (float, optional): Maximum time to wait in seconds. Defaults to 3.0.
+
+        Returns:
+            Optional[torch.Tensor]: Concatenated hidden states or None if timeout or error.
+
+        Raises:
+            ValueError: If no hidden states were collected.
+        """
         try:
             if request_id not in self.collection_ready:
                 self.logger.error(f"Request {request_id} was never initialized")
@@ -99,7 +167,14 @@ class HiddenStatesCollector:
             return None
 
     def _cleanup_request(self, request_id: str):
-        """Clean up resources for a request."""
+        """Clean up resources associated with a completed request.
+
+        This method removes all data structures and synchronization primitives
+        associated with a request to prevent memory leaks.
+
+        Args:
+            request_id (str): Request identifier to clean up.
+        """
         with self.global_lock:
             self.outputs.pop(request_id, None)
             self.collection_ready.pop(request_id, None)
@@ -111,7 +186,17 @@ class HiddenStatesCollector:
             self.logger.debug(f"Cleaned up request {request_id}")
 
     def bind_to_request(self, request_id: str) -> SyncCollectorWrapper:
-        """Create a sync wrapper for VLLM callback."""
+        """Create a synchronous collector wrapper for a request.
+
+        This method initializes collection resources and returns a wrapper that
+        simplifies the collection process for VLLM callbacks.
+
+        Args:
+            request_id (str): Request identifier.
+
+        Returns:
+            SyncCollectorWrapper: Thread-safe wrapper for collecting hidden states.
+        """
         # Synchronous initialization
         self.initialize_request(request_id)
         # Pass request_id to wrapper so it's available even if VLLM passes None

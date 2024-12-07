@@ -16,9 +16,25 @@ colorama.init()
 VLLM_LOGGER_LEVEL = logging.INFO
 
 class VLLMLogOverrider:
-    """Override VLLM loggers to use custom formatting"""
+    """Override VLLM loggers to use custom formatting.
+    
+    This class intercepts and reformats logs from VLLM to provide consistent
+    formatting and better integration with the application's logging system.
+    It handles special cases like performance metrics and filters out unwanted
+    pipeline warnings.
+
+    Attributes:
+        target_logger (logging.Logger): Logger to redirect VLLM logs to.
+        perf_pattern (re.Pattern): Pattern to identify performance metric logs.
+        pipeline_warning_pattern (re.Pattern): Pattern to identify pipeline warnings.
+    """
 
     def __init__(self, target_logger: logging.Logger):
+        """Initialize VLLM log overrider.
+
+        Args:
+            target_logger (logging.Logger): Logger to redirect VLLM logs to.
+        """
         self.target_logger = target_logger
         self.perf_pattern = re.compile(
             r"Avg prompt throughput:.+tokens/s,.+GPU KV cache usage:.+CPU KV cache usage:.+"
@@ -27,7 +43,11 @@ class VLLMLogOverrider:
         self._override_vllm_loggers()
 
     def _override_vllm_loggers(self):
-        """Override VLLM loggers to use our custom handler"""
+        """Override all VLLM loggers to use custom formatting.
+        
+        This method finds all loggers with names starting with 'vllm' and
+        replaces their handlers with our custom handler.
+        """
         global VLLM_LOGGER_LEVEL
         for name in logging.root.manager.loggerDict:
             if name.startswith('vllm'):
@@ -40,7 +60,11 @@ class VLLMLogOverrider:
                 vllm_logger.setLevel(current_level)
 
     def _create_redirecting_handler(self):
-        """Create a handler that uses our custom formatting"""
+        """Create a custom logging handler for VLLM logs.
+        
+        Returns:
+            logging.Handler: Handler that reformats and redirects VLLM logs.
+        """
 
         class RedirectHandler(logging.Handler):
             def __init__(self, target_logger, perf_pattern, pipe_warn):
@@ -68,7 +92,38 @@ class VLLMLogOverrider:
 
 
 class ColoredFormatter(logging.Formatter):
-    """Colored formatter with structured output and file location"""
+    """Colored formatter for structured log output.
+    
+    This formatter adds color-coding, icons, timestamps, and file location
+    information to log messages. It supports different color schemes for
+    different log levels and includes special formatting for exceptions.
+
+    !!! tip "Color Scheme"
+        Each log level has its own color scheme and icon:
+
+        - DEBUG: Cyan (dim) 🔍
+        - INFO: Green ℹ️
+        - WARNING: Yellow (bright) ⚠️
+        - ERROR: Red (bright) ❌
+        - CRITICAL: White on Red background 💀
+
+    !!! example "Sample Output"
+        ```
+        10:30:45.123 | app.py:42 | ℹ️ INFO     | Starting application
+        10:30:45.234 | model.py:156 | ⚠️ WARNING  | GPU memory running low
+        ```
+
+    See Also:
+        - [`setup_logger`][auralis.common.logging.logger.setup_logger]: Main logger setup function
+        - [`VLLMLogOverrider`][auralis.common.logging.logger.VLLMLogOverrider]: VLLM log handler
+
+    Attributes:
+        COLORS (dict): Color schemes for different log levels, including:
+            - color: Foreground color
+            - style: Text style (dim, normal, bright)
+            - icon: Emoji icon for the log level
+            - bg: Background color (for critical logs)
+    """
 
     COLORS = {
         'DEBUG': {
@@ -100,6 +155,21 @@ class ColoredFormatter(logging.Formatter):
     }
 
     def format(self, record: logging.LogRecord) -> str:
+        """Format a log record with color and structure.
+
+        This method formats log records with:
+        - Timestamp in HH:MM:SS.mmm format
+        - File location (filename:line)
+        - Color-coded level name with icon
+        - Color-coded message
+        - Formatted exception traceback if present
+
+        Args:
+            record (logging.LogRecord): Log record to format.
+
+        Returns:
+            str: Formatted log message with color and structure.
+        """
         colored_record = copy.copy(record)
 
         # Get color scheme
@@ -141,12 +211,41 @@ def setup_logger(
         name: Optional[Union[str, Path]] = None,
         level: int = logging.INFO
 ) -> logging.Logger:
-    """
-    Setup a colored logger with VLLM override and file location
+    """Set up a colored logger with VLLM override.
+
+    This function creates or retrieves a logger with colored output and
+    automatic VLLM log interception. If a file path is provided as the name,
+    it will use the filename (without extension) as the logger name.
+
+    !!! note "VLLM Integration"
+        When used with VLLM components, this logger automatically:
+        
+        - Intercepts and reformats VLLM logs
+        - Filters redundant pipeline warnings
+        - Enhances performance metric visibility
+
+    !!! example "Basic Usage"
+        ```python
+        # Setup with module name
+        logger = setup_logger(__name__)
+        logger.info("Starting process")
+
+        # Setup with custom name and level
+        debug_logger = setup_logger("debug_logs", logging.DEBUG)
+        debug_logger.debug("Detailed information")
+        ```
 
     Args:
-        name: Logger name or __file__ for module name
-        level: Logging level
+        name (Optional[Union[str, Path]], optional): Logger name or __file__ for
+            module name. Defaults to None.
+        level (int, optional): Logging level. Defaults to logging.INFO.
+
+    Returns:
+        logging.Logger: Configured logger instance.
+
+    See Also:
+        - [`ColoredFormatter`][auralis.common.logging.logger.ColoredFormatter]: Formatter class
+        - [`VLLMLogOverrider`][auralis.common.logging.logger.VLLMLogOverrider]: VLLM integration
     """
     # Get logger name from file path
     if isinstance(name, (str, Path)) and Path(name).suffix == '.py':
@@ -170,11 +269,17 @@ def setup_logger(
 
 
 def set_vllm_logging_level(level: logging):
-    """
-    Set the logging level for VLLM loggers
+    """Set logging level for all VLLM loggers.
+
+    This function finds all loggers with names starting with 'vllm' and
+    sets their logging level. This is useful for controlling the verbosity
+    of VLLM's output.
 
     Args:
-        level: Logging level to set (e.g., logging.INFO, logging.ERROR)
+        level (logging): Logging level to set (e.g., logging.INFO, logging.DEBUG).
+
+    Example:
+        >>> set_vllm_logging_level(logging.WARNING)  # Reduce VLLM verbosity
     """
     for name in logging.root.manager.loggerDict:
         if name.startswith('vllm'):

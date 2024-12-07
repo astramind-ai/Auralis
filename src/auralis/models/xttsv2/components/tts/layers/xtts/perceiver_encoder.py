@@ -12,10 +12,26 @@ from torch import einsum, nn
 
 
 def exists(val):
+    """Check if a value exists (is not None).
+
+    Args:
+        val: Any value to check.
+
+    Returns:
+        bool: True if value is not None, False otherwise.
+    """
     return val is not None
 
 
 def once(fn):
+    """Decorator to ensure a function is called only once.
+
+    Args:
+        fn (Callable): Function to wrap.
+
+    Returns:
+        Callable: Wrapped function that will only execute on first call.
+    """
     called = False
 
     @wraps(fn)
@@ -35,7 +51,22 @@ print_once = once(print)
 
 
 class Attend(nn.Module):
+    """Efficient attention implementation with support for flash attention.
+    
+    This module implements scaled dot-product attention with support for both
+    regular and flash attention mechanisms. It includes optimizations for
+    different GPU architectures and causal masking support.
+    """
+
     def __init__(self, dropout=0.0, causal=False, use_flash=False):
+        """Initialize attention module.
+
+        Args:
+            dropout (float, optional): Attention dropout probability. Defaults to 0.0.
+            causal (bool, optional): Whether to use causal masking. Defaults to False.
+            use_flash (bool, optional): Whether to use flash attention when available.
+                Defaults to False.
+        """
         super().__init__()
         self.dropout = dropout
         self.attn_dropout = nn.Dropout(dropout)
@@ -66,6 +97,15 @@ class Attend(nn.Module):
             self.cuda_config = self.config(False, True, True)
 
     def get_mask(self, n, device):
+        """Get or create causal attention mask.
+
+        Args:
+            n (int): Sequence length.
+            device: Device to create mask on.
+
+        Returns:
+            torch.Tensor: Causal attention mask.
+        """
         if exists(self.mask) and self.mask.shape[-1] >= n:
             return self.mask[:n, :n]
 
@@ -74,6 +114,17 @@ class Attend(nn.Module):
         return mask
 
     def flash_attn(self, q, k, v, mask=None):
+        """Compute attention using flash attention mechanism.
+
+        Args:
+            q (torch.Tensor): Query tensor.
+            k (torch.Tensor): Key tensor.
+            v (torch.Tensor): Value tensor.
+            mask (torch.Tensor, optional): Attention mask. Defaults to None.
+
+        Returns:
+            torch.Tensor: Output tensor after attention.
+        """
         _, heads, q_len, _, k_len, is_cuda = *q.shape, k.shape[-2], q.is_cuda
 
         # Recommended for multi-query single-key-value attention by Tri Dao
@@ -106,6 +157,17 @@ class Attend(nn.Module):
         return out
 
     def forward(self, q, k, v, mask=None):
+        """Compute attention scores and aggregate values.
+
+        Args:
+            q (torch.Tensor): Query tensor.
+            k (torch.Tensor): Key tensor.
+            v (torch.Tensor): Value tensor.
+            mask (torch.Tensor, optional): Attention mask. Defaults to None.
+
+        Returns:
+            torch.Tensor: Output tensor after attention.
+        """
         """
         einstein notation
         b - batch
@@ -152,21 +214,47 @@ class Attend(nn.Module):
 
 
 def Sequential(*mods):
+    """Create sequential module with automatic filtering of None modules.
+
+    Args:
+        *mods: Variable number of modules.
+
+    Returns:
+        nn.Sequential: Sequential container of non-None modules.
+    """
     return nn.Sequential(*filter(exists, mods))
 
 
-def exists(x):
-    return x is not None
-
-
 def default(val, d):
+    """Return default value if input is None.
+
+    Args:
+        val: Input value.
+        d: Default value or callable.
+
+    Returns:
+        Value to use (input value if it exists, otherwise default).
+    """
     if exists(val):
         return val
     return d() if callable(d) else d
 
 
 class RMSNorm(nn.Module):
+    """Root Mean Square Layer Normalization with optional conditioning.
+    
+    This module implements RMS normalization with learnable scale and optional
+    conditional scaling and bias.
+    """
+
     def __init__(self, dim, scale=True, dim_cond=None):
+        """Initialize RMS normalization.
+
+        Args:
+            dim (int): Feature dimension to normalize.
+            scale (bool, optional): Whether to use learnable scale. Defaults to True.
+            dim_cond (int, optional): Dimension of conditioning input. Defaults to None.
+        """
         super().__init__()
         self.cond = exists(dim_cond)
         self.to_gamma_beta = nn.Linear(dim_cond, dim * 2) if self.cond else None
@@ -175,6 +263,15 @@ class RMSNorm(nn.Module):
         self.gamma = nn.Parameter(torch.ones(dim)) if scale else None
 
     def forward(self, x, cond=None):
+        """Apply RMS normalization.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+            cond (torch.Tensor, optional): Conditioning tensor. Defaults to None.
+
+        Returns:
+            torch.Tensor: Normalized tensor.
+        """
         gamma = default(self.gamma, 1)
         out = F.normalize(x, dim=-1) * self.scale * gamma
 
@@ -188,7 +285,19 @@ class RMSNorm(nn.Module):
 
 
 class CausalConv1d(nn.Conv1d):
+    """1D causal convolution layer.
+    
+    This layer implements 1D convolution with causal padding to prevent information
+    leakage from future timesteps.
+    """
+
     def __init__(self, *args, **kwargs):
+        """Initialize causal convolution.
+
+        Args:
+            *args: Arguments passed to Conv1d.
+            **kwargs: Keyword arguments passed to Conv1d.
+        """
         super().__init__(*args, **kwargs)
         (kernel_size,) = self.kernel_size
         (dilation,) = self.dilation
@@ -198,17 +307,46 @@ class CausalConv1d(nn.Conv1d):
         self.causal_padding = dilation * (kernel_size - 1)
 
     def forward(self, x):
+        """Apply causal convolution.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            torch.Tensor: Output after causal convolution.
+        """
         causal_padded_x = F.pad(x, (self.causal_padding, 0), value=0.0)
         return super().forward(causal_padded_x)
 
 
 class GEGLU(nn.Module):
+    """Gated Gaussian Error Linear Unit activation function."""
+
     def forward(self, x):
+        """Apply GEGLU activation.
+
+        Args:
+            x (torch.Tensor): Input tensor with last dimension split for gating.
+
+        Returns:
+            torch.Tensor: Output after GEGLU activation.
+        """
         x, gate = x.chunk(2, dim=-1)
         return F.gelu(gate) * x
 
 
 def FeedForward(dim, mult=4, causal_conv=False):
+    """Create a feed-forward network with GEGLU activation.
+
+    Args:
+        dim (int): Input dimension.
+        mult (int, optional): Multiplier for inner dimension. Defaults to 4.
+        causal_conv (bool, optional): Whether to use causal convolution.
+            Defaults to False.
+
+    Returns:
+        nn.Sequential: Feed-forward network module.
+    """
     dim_inner = int(dim * mult * 2 / 3)
 
     conv = None
@@ -223,6 +361,13 @@ def FeedForward(dim, mult=4, causal_conv=False):
 
 
 class PerceiverResampler(nn.Module):
+    """Perceiver-based resampling module for sequence processing.
+    
+    This module uses learnable latent vectors to process and resample input sequences
+    through cross-attention and self-attention mechanisms. It's particularly useful
+    for processing variable-length sequences into fixed-length representations.
+    """
+
     def __init__(
         self,
         *,
@@ -235,6 +380,18 @@ class PerceiverResampler(nn.Module):
         ff_mult=4,
         use_flash_attn=False,
     ):
+        """Initialize Perceiver resampler.
+
+        Args:
+            dim (int): Model dimension.
+            depth (int, optional): Number of transformer layers. Defaults to 2.
+            dim_context (int, optional): Context dimension. Defaults to None.
+            num_latents (int, optional): Number of learnable latent vectors. Defaults to 32.
+            dim_head (int, optional): Attention head dimension. Defaults to 64.
+            heads (int, optional): Number of attention heads. Defaults to 8.
+            ff_mult (int, optional): Feed-forward expansion factor. Defaults to 4.
+            use_flash_attn (bool, optional): Whether to use flash attention. Defaults to False.
+        """
         super().__init__()
         dim_context = default(dim_context, dim)
 
@@ -263,6 +420,15 @@ class PerceiverResampler(nn.Module):
         self.norm = RMSNorm(dim)
 
     def forward(self, x, mask=None):
+        """Process input sequence through Perceiver resampling.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape [batch, seq_len, dim].
+            mask (torch.Tensor, optional): Attention mask. Defaults to None.
+
+        Returns:
+            torch.Tensor: Processed tensor of shape [batch, num_latents, dim].
+        """
         batch = x.shape[0]
 
         x = self.proj_context(x)

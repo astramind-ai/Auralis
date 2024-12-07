@@ -20,7 +20,19 @@ from auralis.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
 
 
 class TTS:
+    """A high-performance text-to-speech engine optimized for inference speed.
+    
+    This class provides an interface for both synchronous and asynchronous speech generation,
+    with support for streaming output and parallel processing of multiple requests.
+    """
+
     def __init__(self, scheduler_max_concurrency: int = 10, vllm_logging_level=logging.DEBUG):
+        """Initialize the TTS engine.
+
+        Args:
+            scheduler_max_concurrency (int): Maximum number of concurrent requests to process.
+            vllm_logging_level: Logging level for the VLLM backend.
+        """
         set_vllm_logging_level(vllm_logging_level)
 
         self.scheduler: Optional[TwoPhaseScheduler] = TwoPhaseScheduler(scheduler_max_concurrency)
@@ -35,12 +47,23 @@ class TTS:
         self._async = None
 
     def _run_event_loop(self):
+        """Run the event loop in a separate thread."""
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
 
-
     def from_pretrained(self, model_name_or_path: str, **kwargs):
-        """Load a pretrained model."""
+        """Load a pretrained model from local path or Hugging Face Hub.
+
+        Args:
+            model_name_or_path (str): Local path or Hugging Face model identifier.
+            **kwargs: Additional arguments passed to the model's from_pretrained method.
+
+        Returns:
+            TTS: The TTS instance with loaded model.
+
+        Raises:
+            ValueError: If the model cannot be loaded from the specified path.
+        """
         from auralis.models.registry import MODEL_REGISTRY
 
         try:
@@ -58,7 +81,16 @@ class TTS:
 
         self.tts_engine = MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
         return self
+
     async def prepare_for_streaming_generation(self, request: TTSRequest):
+        """Prepare conditioning for streaming generation.
+
+        Args:
+            request (TTSRequest): The TTS request containing speaker files.
+
+        Returns:
+            Partial function with prepared conditioning for generation.
+        """
         conditioning_config = self.tts_engine.conditioning_config
         if conditioning_config.speaker_embeddings or conditioning_config.gpt_like_decoder_conditioning:
             gpt_cond_latent, speaker_embeddings = await self.tts_engine.get_audio_conditioning(request.speaker_files)
@@ -67,7 +99,14 @@ class TTS:
                            speaker_embeddings=speaker_embeddings)
 
     async def _prepare_generation_context(self, input_request: TTSRequest):
-        """Prepare the generation context for the first phase."""
+        """Prepare the generation context for the first phase of speech synthesis.
+
+        Args:
+            input_request (TTSRequest): The TTS request to process.
+
+        Returns:
+            dict: Dictionary containing parallel inputs and the original request.
+        """
         conditioning_config = self.tts_engine.conditioning_config
         input_request.start_time = time.time()
         if input_request.context_partial_function:
@@ -113,7 +152,17 @@ class TTS:
         }
 
     async def _process_single_generator(self, gen_input: Dict) -> AudioOutputGenerator:
-        """Process a single generator."""
+        """Process a single generator to produce speech output.
+
+        Args:
+            gen_input (Dict): Dictionary containing generator and conditioning information.
+
+        Returns:
+            AudioOutputGenerator: Generator yielding audio chunks.
+
+        Raises:
+            Exception: If any error occurs during processing.
+        """
         try:
             async for chunk in self.tts_engine.process_tokens_to_speech( # type: ignore
                     generator=gen_input['generator'],
@@ -127,11 +176,29 @@ class TTS:
 
     @track_generation
     async def _second_phase_fn(self, gen_input: Dict) -> AudioOutputGenerator:
-        """Second phase: Generate speech."""
+        """Second phase of speech generation: Convert tokens to speech.
+
+        Args:
+            gen_input (Dict): Dictionary containing generator and conditioning information.
+
+        Returns:
+            AudioOutputGenerator: Generator yielding audio chunks.
+        """
         async for chunk in self._process_single_generator(gen_input):
             yield chunk
 
     async def generate_speech_async(self, request: TTSRequest) -> Union[AsyncGenerator[TTSOutput, None], TTSOutput]:
+        """Generate speech asynchronously from text.
+
+        Args:
+            request (TTSRequest): The TTS request to process.
+
+        Returns:
+            Union[AsyncGenerator[TTSOutput, None], TTSOutput]: Audio output, either streamed or complete.
+
+        Raises:
+            RuntimeError: If instance was not created for async generation.
+        """
         if self._async == False:
             raise RuntimeError("This instance was not created for async generation.")
 
@@ -163,7 +230,15 @@ class TTS:
 
     @staticmethod
     def split_requests(request: TTSRequest, max_length: int = 100000) -> List[TTSRequest]:
-        """Split a request into multiple chunks."""
+        """Split a long text request into multiple smaller requests.
+
+        Args:
+            request (TTSRequest): The original TTS request.
+            max_length (int): Maximum length of text per request.
+
+        Returns:
+            List[TTSRequest]: List of split requests.
+        """
         if len(request.text) <= max_length:
             return [request]
 
@@ -175,9 +250,16 @@ class TTS:
             for chunk in text_chunks
         ]
 
-    async def _process_multiple_requests(self, requests: List[TTSRequest], results: Optional[List] = None) -> Optional[
-        TTSOutput]:
-        """Process multiple requests in parallel."""
+    async def _process_multiple_requests(self, requests: List[TTSRequest], results: Optional[List] = None) -> Optional[TTSOutput]:
+        """Process multiple TTS requests in parallel.
+
+        Args:
+            requests (List[TTSRequest]): List of requests to process.
+            results (Optional[List]): Optional list to store results for streaming.
+
+        Returns:
+            Optional[TTSOutput]: Combined audio output if not streaming, None otherwise.
+        """
         output_queues = [asyncio.Queue() for _ in requests] if results is not None else None
 
         async def process_subrequest(idx, sub_request, queue: Optional[asyncio.Queue] = None):
@@ -221,6 +303,17 @@ class TTS:
             return TTSOutput.combine_outputs(complete_audio)
 
     def generate_speech(self, request: TTSRequest) -> Union[Generator[TTSOutput, None, None], TTSOutput]:
+        """Generate speech synchronously from text.
+
+        Args:
+            request (TTSRequest): The TTS request to process.
+
+        Returns:
+            Union[Generator[TTSOutput, None, None], TTSOutput]: Audio output, either streamed or complete.
+
+        Raises:
+            RuntimeError: If instance was created for async generation.
+        """
         if self._async == True:
             raise RuntimeError("This instance was created for async generation.")
 
@@ -235,6 +328,17 @@ class TTS:
             return self._non_streaming_sync_wrapper(requests)
 
     def _non_streaming_sync_wrapper(self, requests):
+        """Synchronous wrapper for non-streaming speech generation.
+
+        Args:
+            requests: List of TTS requests to process.
+
+        Returns:
+            TTSOutput: Combined audio output.
+
+        Raises:
+            Exception: If any error occurs during processing.
+        """
         # Use asyncio.run_coroutine_threadsafe and get a concurrent.futures.Future
         future = asyncio.run_coroutine_threadsafe(self._process_requests(requests), self.loop)
         try:
@@ -243,6 +347,14 @@ class TTS:
             raise e
 
     def _streaming_sync_wrapper(self, requests):
+        """Synchronous wrapper for streaming speech generation.
+
+        Args:
+            requests: List of TTS requests to process.
+
+        Returns:
+            Generator: Generator yielding audio chunks.
+        """
         q = queue.Queue()
 
         async def produce():

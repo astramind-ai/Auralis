@@ -23,6 +23,18 @@ from auralis.models.xttsv2.components.tts.layers.xtts.zh_num2words import TextNo
 import cutlet
 
 def get_spacy_lang(lang):
+    """Get spaCy language model for text processing.
+    
+    This function returns the appropriate spaCy language model based on the
+    input language code. For languages without specific models, it defaults
+    to English which provides basic tokenization capabilities.
+
+    Args:
+        lang (str): Language code (e.g., 'zh', 'ja', 'ar', 'es').
+
+    Returns:
+        spacy.Language: Initialized spaCy language model.
+    """
     if lang == "zh":
         return Chinese()
     elif lang == "ja":
@@ -37,9 +49,29 @@ def get_spacy_lang(lang):
 
 
 def find_best_split_point(text: str, target_pos: int, window_size: int = 30) -> int:
-    """
-    Find best split point near target position considering punctuation and language markers.
-    added for better sentence splitting in TTS.
+    """Find the optimal point to split text near a target position.
+    
+    This function analyzes text around the target position to find the most
+    natural break point, considering punctuation marks, whitespace, and other
+    language markers. It uses a scoring system that prioritizes different types
+    of breaks and their distance from the target position.
+
+    Args:
+        text (str): Input text to analyze.
+        target_pos (int): Target position around which to find split point.
+        window_size (int, optional): Size of text window to analyze. Defaults to 30.
+
+    Returns:
+        int: Position of the best split point.
+
+    Notes:
+        The function uses a prioritized list of markers:
+        1. Strong breaks (periods, exclamation marks, question marks)
+        2. Medium breaks (commas, closing brackets)
+        3. Weak breaks (spaces, special characters)
+        
+        Each marker type has a priority score, and the final position is chosen
+        based on both the marker priority and proximity to target position.
     """
     # Define split markers by priority
     markers = [
@@ -85,16 +117,58 @@ def find_best_split_point(text: str, target_pos: int, window_size: int = 30) -> 
 
 
 def split_sentence(text: str, lang: str, text_split_length: int = 250) -> List[str]:
-    """
-    Enhanced sentence splitting with language awareness and optimal breakpoints.
+    """Split text into natural sentences optimized for TTS.
+    
+    This function performs intelligent text splitting that considers language
+    structure, sentence boundaries, and optimal split points. It uses spaCy
+    for initial sentence detection and handles special cases like long
+    sentences that exceed the target length.
+
+    !!! note "Language Support"
+        The function supports multiple languages through spaCy models:
+        
+        - English (default fallback)
+        - Chinese (zh)
+        - Japanese (ja)
+        - Arabic (ar)
+        - Spanish (es)
+
+    !!! tip "Split Point Selection"
+        Split points are chosen based on priority:
+
+        1. Strong breaks (1.0):
+           - Periods, exclamation marks, question marks
+           - Multiple newlines
+           - Colons, semicolons
+        
+        2. Medium breaks (0.8-0.7):
+           - Commas
+           - Closing brackets/parentheses
+           - Dashes
+        
+        3. Weak breaks (0.6-0.5):
+           - Special characters with spaces
+           - Any whitespace
+
+    !!! example "Usage Example"
+        ```python
+        text = "This is a long sentence. It needs to be split. For TTS processing."
+        splits = split_sentence(text, "en", text_split_length=50)
+        # Result: ["This is a long sentence.", "It needs to be split.", "For TTS processing."]
+        ```
 
     Args:
-        text: Input text to split
-        lang: Language code
-        text_split_length: Target length for splits
+        text (str): Input text to split.
+        lang (str): Language code for text processing.
+        text_split_length (int, optional): Target length for text splits.
+            Defaults to 250.
 
     Returns:
-        List of text splits optimized for TTS
+        List[str]: List of text splits optimized for TTS processing.
+
+    See Also:
+        - [`find_best_split_point`][auralis.models.xttsv2.config.tokenizer.find_best_split_point]: Split point finder
+        - [`get_spacy_lang`][auralis.models.xttsv2.config.tokenizer.get_spacy_lang]: Language model selector
     """
     text = text.strip()
     if len(text) <= text_split_length:

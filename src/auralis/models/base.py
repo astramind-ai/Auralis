@@ -44,33 +44,46 @@ TokenGeneratorsAndPossiblyConditioning = Union[
 
 @dataclass
 class ConditioningConfig:
-    """Conditioning configuration for the model."""
+    """Conditioning configuration for the model.
+    
+    Attributes:
+        speaker_embeddings (bool): Whether the model uses speaker embeddings for voice cloning.
+        gpt_like_decoder_conditioning (bool): Whether the model uses GPT-like decoder conditioning.
+    """
     speaker_embeddings: bool = False
     gpt_like_decoder_conditioning: bool = False
 
 
 class BaseAsyncTTSEngine(ABC, torch.nn.Module):
+    """Base interface for asynchronous text-to-speech engines.
+    
+    This abstract class defines the interface for TTS engines that follow a two-phase generation process:
+    1. Token generation: Converting text to intermediate tokens
+    2. Audio generation: Converting tokens to speech waveforms
+    
+    The class supports both speaker conditioning and GPT-like decoder conditioning for enhanced control
+    over the generated speech. It inherits from torch.nn.Module for neural network functionality.
     """
-    Base interface for TTS engines.
-    It assumes a two-phase generation process:
-    1. Token generation
-    2. Audio generation
-    """
-
 
     @abstractmethod
     async def get_generation_context(
             self,
             request: TTSRequest,
     ) -> TokenGeneratorsAndPossiblyConditioning:
-        """
-        Get token generator for audio generation.
+        """Get token generators and conditioning for audio generation.
+
+        This method prepares the generation context by processing the input text and any
+        conditioning signals (speaker embeddings, GPT conditioning) specified in the request.
 
         Args:
-            request: TTS request object.
+            request (TTSRequest): The TTS request containing input text and optional speaker files.
 
         Returns:
-            A list of async generators of RequestOutput objects.
+            TokenGeneratorsAndPossiblyConditioning: A tuple containing token generators and optional
+                conditioning tensors (speaker embeddings and/or GPT conditioning).
+
+        Raises:
+            NotImplementedError: Must be implemented by subclasses.
         """
         raise NotImplementedError
 
@@ -82,53 +95,79 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
             multimodal_data: GPTLikeDecoderConditioning = None,
             request: TTSRequest = None,
     ) -> AudioOutputGenerator:
-        """
-        Generate speech from token generators.
+        """Generate speech from tokens with optional conditioning.
+
+        This method converts the generated tokens into speech waveforms, applying any
+        specified conditioning signals to control the voice characteristics.
 
         Args:
-            generator: A token generator (for now just vllm generators).
-            speaker_embeddings: Speaker embeddings for voice cloning.
-            multimodal_data: Multimodal data (used for vllm conditional generation).
+            generator (AudioTokenGenerator): Token generator from the first phase.
+            speaker_embeddings (SpeakerEmbeddings): Speaker embeddings for voice cloning.
+            multimodal_data (GPTLikeDecoderConditioning, optional): GPT conditioning data.
+            request (TTSRequest, optional): Original TTS request for reference.
 
         Returns:
-            An async generator of TTSOutput objects.
+            AudioOutputGenerator: An async generator yielding TTSOutput objects containing
+                audio chunks.
+
+        Raises:
+            NotImplementedError: Must be implemented by subclasses.
         """
         raise NotImplementedError
 
     @property
     def conditioning_config(self) -> ConditioningConfig:
-        """Get the conditioning configuration of the model."""
+        """Get the model's conditioning configuration.
+
+        Returns:
+            ConditioningConfig: Configuration specifying which conditioning types are supported.
+
+        Raises:
+            NotImplementedError: Must be implemented by subclasses.
+        """
         raise NotImplementedError
-
-    '''@abstractmethod
-    async def get_speaker_embeddings(self, request: TTSRequest) -> torch.Tensor:
-        """Get speaker embeddings from audio file"""
-        pass
-
-    @abstractmethod
-    async def get_multimodal_conditioning(self, request: TTSRequest) -> torch.Tensor:
-        """Get GPT-like conditioning from audio file"""
-        pass'''
 
     @property
     def device(self):
-        """Get the current device of the model."""
+        """Get the current device of the model.
+
+        Returns:
+            torch.device: The device (CPU/GPU) where the model parameters reside.
+        """
         return next(self.parameters()).device
 
     @property
     def dtype(self):
-        """Get the current dtype of the model."""
+        """Get the current data type of the model parameters.
+
+        Returns:
+            torch.dtype: The data type of the model parameters.
+        """
         return next(self.parameters()).dtype
 
     @abstractmethod
     def get_memory_usage_curve(self):
-        """Get memory usage curve by manually testing for vllm memory usage at different concurrency."""
+        """Get memory usage curve for different concurrency levels.
+
+        This method tests VLLM memory usage at different concurrency levels to help
+        optimize resource allocation.
+
+        Raises:
+            NotImplementedError: Must be implemented by subclasses.
+        """
         raise NotImplementedError
 
     @staticmethod
     def get_memory_percentage(memory: int) -> Optional[float]:
-        """Get memory percentage."""
+        """Calculate the percentage of GPU memory that would be used.
 
+        Args:
+            memory (int): The amount of memory in bytes to check.
+
+        Returns:
+            Optional[float]: The fraction of total GPU memory that would be used,
+                or None if no suitable GPU is found.
+        """
         for i in range(torch.cuda.device_count()):
             free_memory, total_memory = torch.cuda.mem_get_info(i)
             used_memory = total_memory - free_memory
@@ -143,11 +182,34 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
             *args,
             **kwargs
     )-> 'BaseAsyncTTSEngine':
-        """Load a pretrained model."""
+        """Load a pretrained model.
+
+        Args:
+            *args: Variable length argument list.
+            **kwargs: Arbitrary keyword arguments.
+
+        Returns:
+            BaseAsyncTTSEngine: An instance of the model loaded with pretrained weights.
+
+        Raises:
+            NotImplementedError: Must be implemented by subclasses.
+        """
         raise NotImplementedError
 
     @staticmethod
     def load_audio(audio_path: Union[str, Path], sampling_rate: int = 22050) -> torch.Tensor:
+        """Load and preprocess an audio file.
+
+        This method loads an audio file, converts it to mono if needed, resamples to the
+        target sampling rate, and ensures valid amplitude range.
+
+        Args:
+            audio_path (Union[str, Path]): Path to the audio file.
+            sampling_rate (int, optional): Target sampling rate. Defaults to 22050.
+
+        Returns:
+            torch.Tensor: Preprocessed audio tensor with shape (1, samples).
+        """
         audio, lsr = torchaudio.load(audio_path)
 
         # Stereo to mono if needed
