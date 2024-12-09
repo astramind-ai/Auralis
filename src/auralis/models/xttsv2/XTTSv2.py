@@ -37,7 +37,16 @@ from .components.tts.layers.xtts.latent_encoder import ConditioningEncoder
 from .components.tts.layers.xtts.perceiver_encoder import PerceiverResampler
 
 class XTTSv2Engine(BaseAsyncTTSEngine):
-    """Async XTTS model implementation using VLLM's AsyncEngine."""
+    """Asynchronous XTTS model implementation using VLLM's AsyncEngine.
+    
+    This class implements a high-performance text-to-speech engine based on the XTTS v2 architecture.
+    It uses VLLM for efficient token generation and supports both speaker conditioning and
+    GPT-like decoder conditioning for enhanced voice control. The implementation is optimized
+    for inference speed through parallel processing and efficient memory management.
+
+    Attributes:
+        model_type (str): The model type identifier, set to "xtts".
+    """
 
     model_type: "xtts"
 
@@ -47,6 +56,17 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                  pipeline_parallel_size: int = 1,
                  tensor_parallel_size: int = 1,
                  **kwargs):
+        """Initialize the XTTS v2 engine.
+
+        Args:
+            hifi_config (XTTSConfig): Configuration for the HiFi-GAN decoder.
+            gpt_config (XTTSGPTConfig): Configuration for the GPT model.
+            pipeline_parallel_size (int, optional): Number of pipeline parallel partitions. Defaults to 1.
+            tensor_parallel_size (int, optional): Number of tensor parallel partitions. Defaults to 1.
+            **kwargs: Additional arguments including:
+                - gpt_model: Path to the GPT model
+                - max_concurrency: Maximum number of concurrent requests
+        """
         super().__init__()
 
         self.max_gb_for_vllm_model = None
@@ -131,6 +151,12 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.eval()
 
     def get_memory_usage_curve(self):
+        """Calculate the memory usage curve based on concurrency level.
+        
+        Uses empirically determined polynomial coefficients to estimate memory requirements
+        for different concurrency levels. This helps in optimizing resource allocation
+        for the VLLM engine.
+        """
         # empirically found values
         x = np.array([2, 5, 10, 16])
         y = np.array([1.25, 1.35, 1.45, 1.625])
@@ -169,6 +195,14 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         return super().to(*args, **kwargs)
 
     def init_vllm_engine(self, concurrency):
+        """Initialize the VLLM engine with specified concurrency.
+
+        Args:
+            concurrency (int): Maximum number of concurrent requests to handle.
+
+        Raises:
+            RuntimeError: If unable to determine memory usage for model initialization.
+        """
         """Initialize models with AsyncVLLMEngine."""
         max_seq_num = concurrency
         mem_utils = self.get_memory_percentage(self.max_gb_for_vllm_model * 1024 ** 3) #
@@ -206,7 +240,19 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             pipeline_parallel_size: int = 1,
             **kwargs,
     ) -> nn.Module:
-        """Load pretrained XTTS model from HuggingFace Hub."""
+        """Load a pretrained XTTS model from local path or Hugging Face Hub.
+
+        Args:
+            pretrained_model_name_or_path (str): Path to pretrained model or HF model identifier.
+            torch_dtype (torch.dtype, optional): Model data type. Defaults to torch.float32.
+            device_map (Optional[str], optional): Device mapping strategy. Defaults to "auto".
+            tensor_parallel_size (int, optional): Number of tensor parallel partitions. Defaults to 1.
+            pipeline_parallel_size (int, optional): Number of pipeline parallel partitions. Defaults to 1.
+            **kwargs: Additional arguments passed to the model constructor.
+
+        Returns:
+            nn.Module: Loaded XTTS model instance.
+        """
         from huggingface_hub import hf_hub_download
         import json
         import os
@@ -263,6 +309,15 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         return model
 
     async def _get_speaker_embedding(self, audio, sr):
+        """Extract speaker embedding from audio.
+
+        Args:
+            audio: Input audio tensor.
+            sr: Sampling rate of the audio.
+
+        Returns:
+            torch.Tensor: Speaker embedding tensor.
+        """
         audio_16k = torchaudio.functional.resample(audio, sr, 16000)
         async with self.decoder_semaphore:
             return (
@@ -274,6 +329,15 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     async def _merge_conditioning(self,
                                   text_conditioning: List[torch.Tensor],
                                   audio_conditioning: torch.Tensor) -> List[torch.Tensor]:
+        """Merge text and audio conditioning signals.
+
+        Args:
+            text_conditioning (List[torch.Tensor]): List of text conditioning tensors.
+            audio_conditioning (torch.Tensor): Audio conditioning tensor.
+
+        Returns:
+            List[torch.Tensor]: List of merged conditioning tensors.
+        """
         cond_latents = []
         for text_embedding in text_conditioning:
             # Concatenate along sequence dimension
@@ -282,7 +346,17 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         return cond_latents
 
     def get_gpt_cond_latents(self, audio, sr, length: int = 30, chunk_length: int = 6):
-        """Compute the conditioning latents for the GPT model from the given audio."""
+        """Generate GPT conditioning latents from audio.
+
+        Args:
+            audio: Input audio tensor.
+            sr: Sampling rate of the audio.
+            length (int, optional): Maximum reference length in seconds. Defaults to 30.
+            chunk_length (int, optional): Length of each conditioning chunk. Defaults to 6.
+
+        Returns:
+            torch.Tensor: GPT conditioning latents.
+        """
         if sr != 22050:
             audio = torchaudio.functional.resample(audio, sr, 22050)
         if length > 0:
@@ -341,7 +415,20 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             sound_norm_refs=False,
             load_sr=22050,
     ):
-        """Get the conditioning latents for the GPT model from the given audio."""
+        """Generate conditioning latents from reference audio.
+
+        Args:
+            audio_reference: Reference audio file path or tensor.
+            max_ref_length (int, optional): Maximum reference length in seconds. Defaults to 30.
+            gpt_cond_len (int, optional): Length of GPT conditioning. Defaults to 6.
+            gpt_cond_chunk_len (int, optional): Length of each conditioning chunk. Defaults to 6.
+            librosa_trim_db (float, optional): Trim silence below this dB threshold.
+            sound_norm_refs (bool, optional): Whether to normalize reference audio. Defaults to False.
+            load_sr (int, optional): Sampling rate for loading audio. Defaults to 22050.
+
+        Returns:
+            Tuple: GPT conditioning latents and speaker embeddings.
+        """
         # Deal with multiple references
         assert (isinstance(audio_reference, bytes) or
                 isinstance(audio_reference, str) or
@@ -381,6 +468,10 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
     @asynccontextmanager
     async def cuda_memory_manager(self):
+        """Context manager for CUDA memory management.
+        
+        Ensures proper allocation and deallocation of CUDA memory during processing.
+        """
         try:
             yield
         finally:
@@ -389,7 +480,15 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             torch.cuda.empty_cache()
 
     def get_style_emb(self, cond_input: torch.Tensor, return_latent: Optional[bool] = False) -> torch.Tensor:
-        """Get conditioning embeddings from mel spectrograms."""
+        """Extract style embedding from conditioning input.
+
+        Args:
+            cond_input (torch.Tensor): Conditioning input tensor.
+            return_latent (Optional[bool], optional): Whether to return latent representation. Defaults to False.
+
+        Returns:
+            torch.Tensor: Style embedding tensor.
+        """
         if not return_latent:
             if cond_input.ndim == 4:
                 cond_input = cond_input.squeeze(1)
@@ -405,7 +504,16 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
     async def prepare_text_tokens_async(self, text: str, language: str, split_text=False) \
             -> Tuple[List[Union[int, List[int]]], List[torch.Tensor]]:
-        """Prepare text tokens for the given text and language."""
+        """Prepare text tokens and embeddings asynchronously.
+
+        Args:
+            text (str): Input text to tokenize.
+            language (str): Language code.
+            split_text (bool, optional): Whether to split text into chunks. Defaults to False.
+
+        Returns:
+            Tuple: Token IDs and text embeddings.
+        """
         self.logger.debug(f"Preparing text tokens for text: {text}")
         async def elaborate_tokens(text_tokens: List[int]) -> torch.Tensor:
             text_tokens.insert(0, self.tokenizer.bos_token_id)
@@ -438,7 +546,20 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     async def prepare_inputs_async(self, text: str, language: str, speaker_file: List[Union[str, Path]],
                                    max_ref_length: int, gpt_cond_len: int, gpt_cond_chunk_len: int, split_text: bool) \
             -> Tuple[List[List[int]], List[torch.Tensor], torch.Tensor]:
-        """Prepare input text with conditioning tokens. Return combined conditioning latents"""
+        """Prepare all inputs for speech generation asynchronously.
+
+        Args:
+            text (str): Input text.
+            language (str): Language code.
+            speaker_file (List[Union[str, Path]]): List of speaker reference files.
+            max_ref_length (int): Maximum reference length in seconds.
+            gpt_cond_len (int): Length of GPT conditioning.
+            gpt_cond_chunk_len (int): Length of each conditioning chunk.
+            split_text (bool): Whether to split text into chunks.
+
+        Returns:
+            Tuple: Token IDs, text embeddings, and speaker embeddings.
+        """
         # Tokenize text based on the language
         text_tokens, text_embeddings = await self.prepare_text_tokens_async(text, language, split_text)
 
@@ -464,6 +585,20 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             sound_norm_refs=False,
             load_sr=22050,
     ):
+        """Generate audio conditioning from reference files.
+
+        Args:
+            audio_reference ([str, Path]): Reference audio file paths.
+            max_ref_length (int, optional): Maximum reference length in seconds. Defaults to 30.
+            gpt_cond_len (int, optional): Length of GPT conditioning. Defaults to 6.
+            gpt_cond_chunk_len (int, optional): Length of each conditioning chunk. Defaults to 6.
+            librosa_trim_db (float, optional): Trim silence below this dB threshold.
+            sound_norm_refs (bool, optional): Whether to normalize reference audio. Defaults to False.
+            load_sr (int, optional): Sampling rate for loading audio. Defaults to 22050.
+
+        Returns:
+            Tuple: GPT conditioning latents and speaker embeddings.
+        """
         """Async version of get_conditioning_latents with concurrency control."""
         async with self.encoder_semaphore:
             # Run the original get_conditioning_latents in executor
@@ -484,6 +619,16 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             conditioning: MultiModalDataDict,
             request_id: str,
     ) -> torch.Tensor:
+        """Get model logits for token generation.
+
+        Args:
+            token_ids (List[int]): Input token IDs.
+            conditioning (MultiModalDataDict): Conditioning data.
+            request_id (str): Unique request identifier.
+
+        Returns:
+            torch.Tensor: Model logits.
+        """
         """
         Get model logits for a request with retry logic for empty hidden states.
 
@@ -547,6 +692,16 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                                      gpt_cond_latent: Optional[torch.Tensor] = None,
                                      speaker_embeddings: Optional[torch.Tensor] = None,
                                      ) -> TokenGeneratorsAndPossiblyConditioning:
+        """Get generation context for speech synthesis.
+
+        Args:
+            request (TTSRequest): TTS request object.
+            gpt_cond_latent (Optional[torch.Tensor], optional): Pre-computed GPT conditioning latents.
+            speaker_embeddings (Optional[torch.Tensor], optional): Pre-computed speaker embeddings.
+
+        Returns:
+            TokenGeneratorsAndPossiblyConditioning: Token generators and conditioning tensors.
+        """
         if gpt_cond_latent is None or speaker_embeddings is None:
             # Prepare input with conditioning
             tokens_list, gpt_embed_inputs, speaker_embeddings = await self.prepare_inputs_async(
@@ -611,10 +766,17 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             multimodal_data: Optional[torch.Tensor] = None,
             request: TTSRequest = None,
     ) -> AsyncGenerator[TTSOutput, None]:
-        """
-        Process a single token generator and emit results.
-        """
+        """Convert generated tokens to speech waveforms.
 
+        Args:
+            generator (AsyncGenerator[RequestOutput, None]): Token generator.
+            speaker_embeddings (Optional[torch.Tensor], optional): Speaker embeddings.
+            multimodal_data (Optional[torch.Tensor], optional): Additional multimodal data.
+            request (TTSRequest, optional): Original TTS request.
+
+        Yields:
+            TTSOutput: Generated speech chunks.
+        """
         assert speaker_embeddings is not None, "Speaker embeddings must be provided for speech generation with XTTSv2."
         assert multimodal_data is not None, "Multimodal data must be provided for speech generation with XTTSv2."
 

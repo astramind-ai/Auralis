@@ -8,12 +8,42 @@ from auralis.common.logging.logger import setup_logger
 
 
 class TwoPhaseScheduler:
+    """Two-phase asynchronous task scheduler with parallel processing support.
+    
+    This scheduler implements a two-phase processing model where tasks are first
+    processed sequentially (phase 1) and then in parallel (phase 2) with controlled
+    concurrency. It's particularly suited for tasks that require initial setup
+    followed by parallel execution, such as text-to-speech generation.
+
+    Features:
+        - Controlled concurrency for parallel processing
+        - Request timeout management
+        - Ordered output collection from parallel generators
+        - Error handling and cleanup
+        - Resource management with automatic cleanup
+
+    Attributes:
+        second_phase_concurrency (int): Maximum number of parallel phase 2 tasks.
+        request_timeout (float): Maximum time allowed for a complete request.
+        generator_timeout (float): Maximum time allowed between generator yields.
+    """
+
     def __init__(
             self,
             second_phase_concurrency: int = 10,
             request_timeout: float = None,
             generator_timeout: float = None
     ):
+        """Initialize the scheduler.
+
+        Args:
+            second_phase_concurrency (int, optional): Maximum parallel phase 2 tasks.
+                Defaults to 10.
+            request_timeout (float, optional): Request timeout in seconds.
+                Defaults to None (no timeout).
+            generator_timeout (float, optional): Generator timeout in seconds.
+                Defaults to None (no timeout).
+        """
         # Core configuration
         self.second_phase_concurrency = second_phase_concurrency
         self.request_timeout = request_timeout
@@ -34,6 +64,11 @@ class TwoPhaseScheduler:
         self.cleanup_lock = asyncio.Lock()
 
     async def start(self):
+        """Start the scheduler.
+        
+        Initializes queues, semaphores, and worker tasks. This method is
+        idempotent and safe to call multiple times.
+        """
         if self.is_running:
             return
 
@@ -46,7 +81,11 @@ class TwoPhaseScheduler:
         ]
 
     async def _process_queue(self):
-        """Continuously process requests from the queue."""
+        """Process requests from the queue continuously.
+        
+        This is a worker task that runs continuously while the scheduler is active,
+        processing requests as they arrive in the queue.
+        """
         while self.is_running:
             try:
                 request = await self.request_queue.get()
@@ -65,6 +104,14 @@ class TwoPhaseScheduler:
 
     @asynccontextmanager
     async def _request_lifecycle(self, request_id: str):
+        """Manage the lifecycle of a request.
+
+        Context manager that ensures proper cleanup of request resources,
+        even if processing fails.
+
+        Args:
+            request_id (str): ID of the request to manage.
+        """
         try:
             yield
         finally:
@@ -72,7 +119,14 @@ class TwoPhaseScheduler:
                 self.active_requests.pop(request_id, None)
 
     async def _process_request(self, request: QueuedRequest):
-        """Handle the two-phase processing of a request."""
+        """Process a request through both phases.
+
+        Handles the complete lifecycle of a request, including both phases
+        of processing and error handling.
+
+        Args:
+            request (QueuedRequest): Request to process.
+        """
         try:
             self.logger.info(f"Starting request {request.id}")
             # Phase 1: Initial processing
@@ -93,7 +147,17 @@ class TwoPhaseScheduler:
             request.completion_event.set()
 
     async def _handle_first_phase(self, request: QueuedRequest):
-        """Execute the first phase of processing."""
+        """Execute the first phase of request processing.
+
+        This phase typically involves setup and preparation for parallel processing.
+        It runs sequentially and its results are used to configure phase 2.
+
+        Args:
+            request (QueuedRequest): Request to process.
+
+        Raises:
+            TimeoutError: If processing exceeds request_timeout.
+        """
         request.state = TaskState.PROCESSING_FIRST
         try:
             request.first_phase_result = await asyncio.wait_for(
@@ -108,7 +172,17 @@ class TwoPhaseScheduler:
             raise TimeoutError(f"First phase timeout after {self.request_timeout}s")
 
     async def _handle_second_phase(self, request: QueuedRequest):
-        """Execute the second phase of processing."""
+        """Execute the second phase of request processing.
+
+        This phase runs multiple generators in parallel, with controlled concurrency.
+        It manages the lifecycle of all parallel tasks and handles timeouts.
+
+        Args:
+            request (QueuedRequest): Request to process.
+
+        Raises:
+            TimeoutError: If processing exceeds request_timeout.
+        """
         parallel_inputs = request.first_phase_result.get('parallel_inputs', [])
         generator_tasks = [
             asyncio.create_task(self._process_generator(request, gen_input, idx))
@@ -132,6 +206,16 @@ class TwoPhaseScheduler:
             generator_input: Any,
             sequence_idx: int,
     ):
+        """Process a single generator in the second phase.
+
+        Manages the complete lifecycle of a generator, including initialization,
+        execution, error handling, and cleanup.
+
+        Args:
+            request (QueuedRequest): Parent request.
+            generator_input (Any): Input for this generator.
+            sequence_idx (int): Sequence index for ordered output collection.
+        """
         async with self.second_phase_sem:
             try:
                 await self._init_generator(request, sequence_idx)
@@ -145,6 +229,14 @@ class TwoPhaseScheduler:
                 await self._cleanup_generator(request, sequence_idx)
 
     async def _init_generator(self, request: QueuedRequest, sequence_idx: int):
+        """Initialize resources for a generator.
+
+        Sets up synchronization primitives and counters for a new generator.
+
+        Args:
+            request (QueuedRequest): Parent request.
+            sequence_idx (int): Sequence index of the generator.
+        """
         async with self.generator_count_lock:
             self.active_generator_count += 1
             if not hasattr(request, 'generator_events'):
@@ -152,6 +244,19 @@ class TwoPhaseScheduler:
             request.generator_events[sequence_idx] = asyncio.Event()
 
     async def _run_generator(self, request: QueuedRequest, generator_input: Any, sequence_idx: int):
+        """Run a generator and collect its outputs.
+
+        Executes the generator and stores its outputs in sequence buffers for
+        ordered collection.
+
+        Args:
+            request (QueuedRequest): Parent request.
+            generator_input (Any): Input for this generator.
+            sequence_idx (int): Sequence index for output ordering.
+
+        Raises:
+            TimeoutError: If generator exceeds generator_timeout between yields.
+        """
         generator = request.second_fn(generator_input)
         buffer = request.sequence_buffers[sequence_idx]
 
@@ -172,11 +277,28 @@ class TwoPhaseScheduler:
                 raise TimeoutError(f"Generator {sequence_idx} timed out")
 
     def _handle_generator_error(self, request: QueuedRequest, sequence_idx: int, error: Exception):
+        """Handle errors from a generator.
+
+        Records the error and logs it appropriately.
+
+        Args:
+            request (QueuedRequest): Parent request.
+            sequence_idx (int): Sequence index of the failed generator.
+            error (Exception): Error that occurred.
+        """
         self.logger.error(f"Generator {sequence_idx} failed for request {request.id}: {error}")
         if request.error is None:
             request.error = error
 
     async def _cleanup_generator(self, request: QueuedRequest, sequence_idx: int):
+        """Clean up resources after a generator completes.
+
+        Updates counters and signals completion of the generator.
+
+        Args:
+            request (QueuedRequest): Parent request.
+            sequence_idx (int): Sequence index of the completed generator.
+        """
         async with self.generator_count_lock:
             self.active_generator_count -= 1
             request.completed_generators += 1
@@ -184,7 +306,21 @@ class TwoPhaseScheduler:
                 request.generator_events[sequence_idx].set()
 
     async def _yield_ordered_outputs(self, request: QueuedRequest) -> AsyncGenerator[Any, None]:
-        """Yield outputs in sequence order."""
+        """Yield outputs from all generators in sequence order.
+
+        Collects outputs from multiple generators and yields them in the correct
+        sequence order, handling timeouts and errors.
+
+        Args:
+            request (QueuedRequest): Request to yield outputs from.
+
+        Yields:
+            Any: Output items in sequence order.
+
+        Raises:
+            TimeoutError: If no progress is made within request_timeout.
+            Exception: If any generator fails.
+        """
         current_index = 0
         last_progress = time.time()
 
@@ -214,14 +350,39 @@ class TwoPhaseScheduler:
             await asyncio.sleep(0.01)
 
     def _is_processing_complete(self, request: QueuedRequest) -> bool:
+        """Check if request processing is complete.
+
+        Args:
+            request (QueuedRequest): Request to check.
+
+        Returns:
+            bool: True if all processing is complete, False otherwise.
+        """
         return (request.state in (TaskState.COMPLETED, TaskState.FAILED) and
                 request.completed_generators >= request.generators_count and
                 all(len(buffer) == 0 for buffer in request.sequence_buffers.values()))
 
     def _check_timeout(self, last_progress: float) -> bool:
+        """Check if request has timed out.
+
+        Args:
+            last_progress (float): Timestamp of last progress.
+
+        Returns:
+            bool: True if request has timed out, False otherwise.
+        """
         return self.request_timeout and time.time() - last_progress > self.request_timeout
 
     def _can_advance_sequence(self, request: QueuedRequest, current_index: int) -> bool:
+        """Check if sequence can advance to next index.
+
+        Args:
+            request (QueuedRequest): Request being processed.
+            current_index (int): Current sequence index.
+
+        Returns:
+            bool: True if sequence can advance, False otherwise.
+        """
         return (hasattr(request, 'generator_events') and
                 current_index in request.generator_events and
                 request.generator_events[current_index].is_set())
@@ -233,6 +394,28 @@ class TwoPhaseScheduler:
             second_phase_fn: Callable[[Dict], AsyncGenerator],
             request_id: str = None,
     ) -> AsyncGenerator[Any, None]:
+        """Run a two-phase processing task.
+
+        This is the main entry point for task execution. It creates a new request,
+        queues it for processing, and yields results in sequence order.
+
+        Args:
+            inputs (Any): Input data for processing.
+            first_phase_fn (Callable[[Any], Awaitable[Any]]): Function for phase 1.
+            second_phase_fn (Callable[[Dict], AsyncGenerator]): Function for phase 2.
+            request_id (str, optional): Custom request ID. Defaults to None.
+
+        Yields:
+            Any: Processing results in sequence order.
+
+        Example:
+            >>> async for result in scheduler.run(
+            ...     inputs=text,
+            ...     first_phase_fn=prepare_text,
+            ...     second_phase_fn=generate_speech
+            ... ):
+            ...     process_result(result)
+        """
         if not self.is_running:
             await self.start()
 

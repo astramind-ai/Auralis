@@ -1,0 +1,73 @@
+site_name: Auralis Documentation
+site_description: Documentation for Auralis - A high-performance TTS library
+repo_url: https://github.com/yourusername/Auralis
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - search.highlight
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: true
+            show_root_heading: true
+            heading_level: 1
+            docstring_style: google
+            show_category_heading: true
+            show_if_no_docstring: true
+            filters:
+              - "!^_"  # Hide private members
+              - "!^__"  # Hide special members
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Quick Start: getting-started/quickstart.md
+  - API Reference:
+    - Core:
+      - TTS: api/core/tts.md
+      - Base Model: api/core/base.md
+    - Models:
+      - XTTSv2: api/models/xttsv2.md
+    - Common:
+      - Logging: api/common/logging.md
+  - Advanced Topics:
+    - Adding Models: advanced/adding-models.md
+    - Using OAI Server: advanced/using-oai-server.md
+    - Performance Tuning: advanced/performance-tuning.md
+    - Deployment: advanced/deployment.md
+  - Contributing:
+    - Documentation: contributing/documentation.md 

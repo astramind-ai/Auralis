@@ -19,13 +19,31 @@ from cachetools import LRUCache
 
 
 def hash_params(*args, **kwargs):
-    """Create a hash from the parameters"""
-    # Convert args and kwargs to a JSON string and hash it
+    """Create a hash from function parameters for caching.
+
+    Args:
+        *args: Variable positional arguments to hash.
+        **kwargs: Variable keyword arguments to hash.
+
+    Returns:
+        str: MD5 hash of the stringified parameters.
+    """
     params_str = json.dumps([str(arg) for arg in args], sort_keys=True)
     return hashlib.md5(params_str.encode()).hexdigest()
 
 
 def cached_processing(maxsize=128):
+    """Decorator for caching audio processing results.
+
+    Implements an LRU cache for audio processing functions to avoid
+    reprocessing the same audio files with the same configuration.
+
+    Args:
+        maxsize (int, optional): Maximum size of the LRU cache. Defaults to 128.
+
+    Returns:
+        Callable: Decorated function with caching behavior.
+    """
     def decorator(func):
         # Create cache storage
         cache = LRUCache(maxsize=maxsize)
@@ -77,6 +95,17 @@ SupportedLanguages = Literal[
 
 @lru_cache(maxsize=1024)
 def get_language(text: str):
+    """Detect the language of input text.
+
+    Uses langid for language detection and handles special cases like
+    Chinese (zh-cn).
+
+    Args:
+        text (str): Text to detect language for.
+
+    Returns:
+        str: Detected language code.
+    """
     detected_language =  langid.classify(text)[0].strip()
     if detected_language == "zh":
         # we use zh-cn
@@ -84,6 +113,17 @@ def get_language(text: str):
     return detected_language
 
 def validate_language(language: str) -> SupportedLanguages:
+    """Validate that a language code is supported.
+
+    Args:
+        language (str): Language code to validate.
+
+    Returns:
+        SupportedLanguages: Validated language code.
+
+    Raises:
+        ValueError: If the language is not supported.
+    """
     supported = get_args(SupportedLanguages)
     if language not in supported:
         raise ValueError(
@@ -93,7 +133,34 @@ def validate_language(language: str) -> SupportedLanguages:
 
 @dataclass
 class TTSRequest:
-    """Container for TTS inference request data"""
+    """Container for TTS inference request data.
+    
+    This class encapsulates all parameters needed for text-to-speech synthesis,
+    including text input, speaker reference files, and generation parameters.
+    It also handles audio preprocessing and language detection.
+
+    Attributes:
+        text (Union[AsyncGenerator[str, None], str, List[str]]): Input text to synthesize.
+        speaker_files (Union[Union[str,List[str]], Union[bytes,List[bytes]]]): Reference audio for voice cloning.
+        context_partial_function (Optional[Callable]): Optional function for context preparation.
+        start_time (Optional[float]): Request start time.
+        enhance_speech (bool): Whether to apply speech enhancement.
+        audio_config (AudioPreprocessingConfig): Audio preprocessing configuration.
+        language (SupportedLanguages): Language code for synthesis.
+        request_id (str): Unique request identifier.
+        load_sample_rate (int): Sample rate for loading audio files.
+        sound_norm_refs (bool): Whether to normalize reference audio.
+        max_ref_length (int): Maximum reference audio length in seconds.
+        gpt_cond_len (int): Length of GPT conditioning.
+        gpt_cond_chunk_len (int): Length of each conditioning chunk.
+        stream (bool): Whether to stream the output.
+        temperature (float): Sampling temperature.
+        top_p (float): Nucleus sampling parameter.
+        top_k (int): Top-k sampling parameter.
+        repetition_penalty (float): Penalty for token repetition.
+        length_penalty (float): Penalty for sequence length.
+        do_sample (bool): Whether to use sampling for generation.
+    """
     # Request metadata
     text: Union[AsyncGenerator[str, None], str, List[str]]
 
@@ -123,7 +190,10 @@ class TTSRequest:
     do_sample: bool = True
 
     def __post_init__(self):
-
+        """Initialize request after dataclass creation.
+        
+        Performs language detection if needed and sets up audio preprocessing.
+        """
         if self.language == 'auto' and len(self.text) > 0:
             self.language = get_language(self.text)
 
@@ -133,11 +203,30 @@ class TTSRequest:
             self.speaker_files = [self.preprocess_audio(f, self.audio_config) for f in self.speaker_files]
 
     def infer_language(self):
+        """Infer the language of the input text if not specified.
+        
+        Updates the language attribute based on text content if set to 'auto'.
+        """
         if self.language == 'auto':
             self.language = get_language(self.text)
 
     @cached_processing()
     def preprocess_audio(self, audio_source: Union[str, bytes], audio_config: AudioPreprocessingConfig) -> str:
+        """Preprocess audio files for voice cloning.
+
+        Applies audio enhancement and preprocessing according to the configuration.
+        Results are cached to avoid reprocessing the same files.
+
+        Args:
+            audio_source (Union[str, bytes]): Path to audio file or audio data.
+            audio_config (AudioPreprocessingConfig): Preprocessing configuration.
+
+        Returns:
+            str: Path to the processed audio file.
+
+        Note:
+            Processed files are stored in /tmp/auralis with unique identifiers.
+        """
         try:
             temp_dir = Path("/tmp/auralis")
             temp_dir.mkdir(exist_ok=True)
@@ -159,7 +248,11 @@ class TTSRequest:
             return audio_source
 
     def copy(self):
+        """Create a deep copy of the request.
 
+        Returns:
+            TTSRequest: New instance with the same attributes.
+        """
         copy_fields = {
             'text': self.text,
             'speaker_files': self.speaker_files,

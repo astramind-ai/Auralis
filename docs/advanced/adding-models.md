@@ -1,5 +1,3 @@
-**ADDING_MODELS.md**
-
 # How to Add Your Own Models to Auralis
 
 So, you want to bring your own TTS models into the mix? Sweet! Here's how you can plug them into Auralis.

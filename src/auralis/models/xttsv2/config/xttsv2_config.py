@@ -8,14 +8,40 @@ logger = logging.get_logger(__name__)
 
 @dataclass
 class GPTAudioConfig:
-    """Configuration for GPT audio processing parameters"""
+    """Configuration for GPT audio processing parameters.
+    
+    This class defines the basic audio processing parameters used by the GPT
+    component of the XTTS model.
+
+    Attributes:
+        mel_channels (int): Number of mel-spectrogram channels. Defaults to 80.
+        sample_rate (int): Input audio sampling rate in Hz. Defaults to 22050.
+        output_sample_rate (int): Output audio sampling rate in Hz. Defaults to 24000.
+    """
     mel_channels: int = 80
     sample_rate: int = 22050
     output_sample_rate: int = 24000
 
 @dataclass
 class XTTSAudioConfig:
-    """Configuration for audio processing parameters"""
+    """Configuration for XTTS audio processing parameters.
+    
+    This class defines the complete set of audio processing parameters used
+    throughout the XTTS model, including mel-spectrogram generation and
+    normalization.
+
+    Attributes:
+        sample_rate (int): Input audio sampling rate in Hz. Defaults to 22050.
+        output_sample_rate (int): Output audio sampling rate in Hz. Defaults to 24000.
+        mel_channels (int): Number of mel-spectrogram channels. Defaults to 80.
+        hop_length (int): Number of samples between STFT columns. Defaults to 256.
+        win_length (int): Window size for STFT. Defaults to 1024.
+        n_fft (int): FFT size. Defaults to 1024.
+        fmin (int): Minimum frequency for mel scale. Defaults to 0.
+        fmax (int): Maximum frequency for mel scale. Defaults to 8000.
+        power (float): Power of the magnitude spectrogram. Defaults to 1.0.
+        mel_norms_file (Optional[str]): Path to mel-spectrogram normalization file.
+    """
     sample_rate: int = 22050
     output_sample_rate: int = 24000
     mel_channels: int = 80
@@ -29,7 +55,36 @@ class XTTSAudioConfig:
 
 
 class XTTSGPTConfig(PretrainedConfig):
-    """Configuration class for the GPT component of XTTS."""
+    """Configuration for the GPT component of XTTS.
+    
+    This class defines the architecture and behavior of the GPT model used in XTTS.
+    It inherits from HuggingFace's PretrainedConfig for compatibility with the
+    transformers library.
+
+    The GPT model is responsible for generating audio tokens from text tokens,
+    with support for various conditioning signals and architectural features.
+
+    Attributes:
+        hidden_size (int): Size of hidden layers. Defaults to 1024.
+        n_inner (int): Size of feed-forward inner layer. Defaults to 4096.
+        num_hidden_layers (int): Number of transformer layers. Defaults to 30.
+        num_attention_heads (int): Number of attention heads. Defaults to 16.
+        vocab_size (int): Size of text vocabulary. Defaults to 6681.
+        number_text_tokens (int): Explicit text token vocabulary size.
+        start_text_token (Optional[int]): Token ID for text start.
+        stop_text_token (Optional[int]): Token ID for text end.
+        num_audio_tokens (int): Size of audio token vocabulary. Defaults to 1026.
+        start_audio_token (int): Token ID for audio start. Defaults to 1024.
+        stop_audio_token (int): Token ID for audio end. Defaults to 1025.
+        max_audio_tokens (int): Maximum audio sequence length. Defaults to 605.
+        max_text_tokens (int): Maximum text sequence length. Defaults to 402.
+        max_prompt_tokens (int): Maximum prompt sequence length. Defaults to 70.
+        use_masking_gt_prompt_approach (bool): Whether to use masking. Defaults to True.
+        use_perceiver_resampler (bool): Whether to use perceiver. Defaults to True.
+        kv_cache (bool): Whether to use KV cache. Defaults to True.
+        enable_redaction (bool): Whether to enable redaction. Defaults to False.
+        audio_config (Optional[Dict]): Audio processing configuration.
+    """
     model_type = "xtts_gpt"
 
     def __init__(
@@ -130,19 +185,53 @@ class XTTSGPTConfig(PretrainedConfig):
         self.decoder_input_dim = decoder_input_dim
 
     def to_dict(self) -> Dict:
-        """Convert the config to a dictionary."""
+        """Convert configuration to dictionary format.
+
+        Returns:
+            Dict: Configuration dictionary including audio config.
+        """
         output = super().to_dict()
         output["audio_config"] = asdict(self.audio_config)
         return output
 
     @classmethod
     def from_dict(cls, config_dict: Dict, *args, **kwargs) -> "XTTSGPTConfig":
-        """Create a config from a dictionary."""
+        """Create configuration from dictionary.
+
+        Args:
+            config_dict (Dict): Configuration dictionary.
+            *args: Additional positional arguments.
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            XTTSGPTConfig: Configuration instance.
+        """
         return cls(**config_dict)
 
 
 class XTTSConfig(PretrainedConfig):
-    """Configuration class for XTTS model components except GPT."""
+    """Configuration for the complete XTTS model.
+    
+    This class defines the configuration for all XTTS components except the GPT
+    model (which has its own config). It includes settings for audio processing,
+    model architecture, training, tokenization, and language support.
+
+    Attributes:
+        audio_config (XTTSAudioConfig): Audio processing configuration.
+        input_sample_rate (int): Input audio sampling rate. Defaults to 22050.
+        output_sample_rate (int): Output audio sampling rate. Defaults to 24000.
+        output_hop_length (int): Output hop length. Defaults to 256.
+        decoder_input_dim (int): Decoder input dimension. Defaults to 1024.
+        d_vector_dim (int): Speaker embedding dimension. Defaults to 512.
+        cond_d_vector_in_each_upsampling_layer (bool): Whether to condition each
+            upsampling layer. Defaults to True.
+        gpt_code_stride_len (int): GPT code stride length. Defaults to 1024.
+        duration_const (int): Duration constant. Defaults to 102400.
+        tokenizer_file (str): Path to tokenizer file.
+        num_chars (int): Number of characters. Defaults to 255.
+        languages (List[str]): Supported language codes.
+        gpt (XTTSGPTConfig): GPT model configuration.
+    """
     model_type = "xtts"
 
     def __init__(
@@ -212,7 +301,11 @@ class XTTSConfig(PretrainedConfig):
             self.languages = languages
 
     def to_dict(self) -> Dict:
-        """Convert the config to a dictionary."""
+        """Convert configuration to dictionary format.
+
+        Returns:
+            Dict: Configuration dictionary including audio and GPT configs.
+        """
         output = super().to_dict()
         output["audio_config"] = asdict(self.audio_config)
         output["gpt_config"] = self.gpt.to_dict()
@@ -220,7 +313,16 @@ class XTTSConfig(PretrainedConfig):
 
     @classmethod
     def from_dict(cls, config_dict: Dict, *args, **kwargs) -> "XTTSConfig":
-        """Create a config from a dictionary."""
+        """Create configuration from dictionary.
+
+        Args:
+            config_dict (Dict): Configuration dictionary.
+            *args: Additional positional arguments.
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            XTTSConfig: Configuration instance.
+        """
         if "gpt_config" in config_dict:
             gpt_config = config_dict["gpt_config"]
             config_dict = {k: v for k, v in config_dict.items() if k != "gpt_config"}
