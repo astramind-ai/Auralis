@@ -1,35 +1,36 @@
-#  Copyright (c) 2024 Astramind. Licensed under Apache License, Version 2.0.
-
 import asyncio
-from typing import Union, AsyncGenerator
+from typing import Callable
 
-from auralis import TTSRequest
-from auralis.common.definitions.scheduler.context import GenerationContext
+from auralis import setup_logger
+from auralis.common.scheduling.dynamic_resource_lock import DynamicResourceLock
 
-
+logger = setup_logger(__name__)
 class AsyncScheduler:
-    def __init__(self, batcher, is_streaming=False):
-        self.batcher = batcher
-        self.is_streaming = is_streaming
-        self.input_queue: asyncio.Queue[Union[TTSRequest, GenerationContext]] = asyncio.Queue()
-        self.output_queue: asyncio.Queue[[Union[GenerationContext, AsyncGenerator[TTSRequest, None]]]]= asyncio.Queue()
+    def __init__(self, resource_lock: DynamicResourceLock, processing_function: Callable, stage_name: str):
+        self.resource_lock = resource_lock
+        self.processing_function = processing_function
+        self.stage_name = stage_name
+        self.input_queue = asyncio.Queue()
 
-    async def process(self):
+    def get_next_stage(self, stage: str):
+        stages = ['conditioning', 'phonetic', 'speech']
+        return stages[stages.index(stage) + 1]
 
+    async def process(self, orchestrator: 'Orchestrator'):
+        """Processes items, respecting resource limits and signaling completion."""
         while True:
-            batch = await self.batcher.create_batch(self.input_queue)
-            if not batch:
-                continue
+            request_id, input_data, stage, output, completion_event = await self.input_queue.get()
 
-            if self.is_streaming:
-                # The last scheduler is a streaming one
-                async for result in self.batcher.process(batch):
-                    await self.output_queue.put(result)
-            else:
-                # the first two schedulers are non-streaming
-                processed = await self.batcher.process(batch)
-                await self.output_queue.put(processed)
+            batch_size =input_data.length(self.stage_name)
+            try:
+                async with self.resource_lock.lock_resource(batch_size):
+                    new_output = await self.processing_function(input_data)
 
+                    next_stage = self.get_next_stage(stage)
+                    if next_stage == "completed":
+                        completion_event.set()
 
-
-
+                    # Put the item back into the main queue with updated stage and output
+                    await orchestrator.queue.put((request_id, input_data, next_stage, new_output, completion_event))
+            except Exception as e: # TODO: better except
+                logger.error(f"Error processing request {request_id}: {e}")

@@ -1,4 +1,5 @@
 import asyncio
+import sys
 import threading
 import queue
 import inspect
@@ -26,6 +27,7 @@ class Profiler:
 
             for function_data, function in zip(fake_factories, profiling_functions):
                 if not function_data:
+                    # for vllm is useless
                     continue
                 data = function_data(config)
 
@@ -48,7 +50,7 @@ class Profiler:
             )
 
 
-        # Eseguiamo run_profiling in un thread separato
+        # We run the profiling in a separate thread to avoid blocking the main thread
         result_queue = queue.Queue()
 
         def worker():
@@ -56,8 +58,10 @@ class Profiler:
                 result = asyncio.run(run_profiling())
                 result_queue.put(result)
             except torch.cuda.OutOfMemoryError:
-                logger.error("Profiling failed: CUDA out of memory, try reducing the concurrency")
-                result_queue.put(None)
+                error_message = "Profiling failed: CUDA out of memory, try reducing the concurrency"
+                logger.error(error_message)
+                raise RuntimeError(error_message)
+
 
         t = threading.Thread(target=worker)
         t.start()

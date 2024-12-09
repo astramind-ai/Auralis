@@ -2,8 +2,9 @@
 import asyncio
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
+from functools import wraps
 from pathlib import Path
-from typing import Union, Optional, AsyncGenerator, List
+from typing import Union, Optional, AsyncGenerator, List, Callable
 
 import torch
 import torchaudio
@@ -23,6 +24,19 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
     """
 
     ### Phases ###
+    @abstractmethod
+    async def preprocess_inputs(self, request: TTSRequest) -> GenerationContext:
+        """
+        Preprocesses a TTS request, returning a GenerationContext object.
+        This method should be implemented by subclasses.
+
+        Args:
+            request: TTS request object.
+
+        Returns:
+            A GenerationContext object.
+        """
+        raise NotImplementedError
 
     @abstractmethod
     async def conditioning_phase(
@@ -62,7 +76,7 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
     async def speech_phase(
             self,
             context: GenerationContext,
-    ) -> AsyncGenerator[TTSOutput, None]:
+    ) -> TTSOutput:
         """
         This phase should be where the audio is generated.
         In XTTSv2 this is the part where the vocoder generates the audio
@@ -71,7 +85,7 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
             context: A generation context object.
 
         Returns:
-            An async generator of TTSOutput objects.
+            A TTSOutput object.
         """
         raise NotImplementedError
 
@@ -91,6 +105,7 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
         """Load a pretrained model."""
         raise NotImplementedError
 
+
     @property
     def device(self):
         """Get the current device of the model."""
@@ -103,8 +118,21 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
 
     @staticmethod
     def get_memory_percentage(memory: int) -> Optional[float]:
-        """Get memory percentage."""
+        """
+        Estimate the memory occupation of the model on the GPU.
 
+        The function tries to estimate the memory occupation of the model by
+        checking the free memory on each GPU and summing up the memory
+        required by the model. If the estimated memory occupation is between
+        0 and 1, it is returned, otherwise None is returned.
+
+        Args:
+            memory (int): The memory required by the model in bytes.
+
+        Returns:
+            Optional[float]: The estimated memory occupation of the model
+                between 0 and 1, or None if the estimation fails.
+        """
         for i in range(torch.cuda.device_count()):
             free_memory, total_memory = torch.cuda.mem_get_info(i)
             used_memory = total_memory - free_memory
@@ -115,6 +143,16 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
 
     @staticmethod
     def load_audio(audio_path: Union[str, Path], sampling_rate: int = 22050) -> torch.Tensor:
+        """
+        Loads an audio file into a tensor.
+
+        Args:
+            audio_path: path to the audio file.
+            sampling_rate: target sampling rate.
+
+        Returns:
+            A tensor containing the audio data.
+        """
         audio, lsr = torchaudio.load(audio_path)
 
         # Stereo to mono if needed
@@ -130,6 +168,22 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
 
     @asynccontextmanager
     async def cuda_memory_manager(self):
+        """
+        Context manager to manage CUDA memory.
+
+        This context manager ensures that the CUDA memory is deallocated
+        after the code block is finished. It also ensures that the memory
+        is deallocated even if an exception is raised.
+
+        Notes:
+            - This context manager is designed to be used with the `async with`
+              statement. It is not thread-safe and should not be used with
+              the `with` statement.
+            - The `torch.cuda.empty_cache()` call is necessary to deallocate
+              the memory, but it can take some time. To avoid blocking the
+              event loop, we use `asyncio.sleep(0.1)` to give other tasks a
+              chance to run.
+        """
         try:
             yield
         finally:

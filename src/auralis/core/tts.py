@@ -20,13 +20,17 @@ from auralis.common.logging.logger import setup_logger, set_vllm_logging_level
 from auralis.common.metrics.performance import track_generation
 from auralis.models.base import BaseAsyncTTSEngine
 
+logger = setup_logger(__file__)
 
 class TTS:
-    def __init__(self, scheduler_max_concurrency: int = 10, vllm_logging_level=logging.DEBUG):
+    def __init__(self, scheduler_max_concurrency: int = None, vllm_logging_level=logging.DEBUG):
         set_vllm_logging_level(vllm_logging_level)
 
         self.orchestrator: Optional[Orchestrator] = None
         self.tts_engine: Optional[BaseAsyncTTSEngine] = None
+        if scheduler_max_concurrency is not None:
+            logger.warning("scheduler_max_concurrency passed as a TTS argument is deprecated and will be removed "
+                           "in future releases, please pass it to the method from_pretrained")
         self.concurrency = scheduler_max_concurrency # kept for backwards compatibility
         self.logger = setup_logger(__file__)
 
@@ -171,7 +175,10 @@ class TTS:
                 raise ValueError(f"Could not load model from {model_name_or_path} neither locally or online: {e}")
         if kwargs.get('scheduler_max_concurrency', None) is None:
             kwargs['scheduler_max_concurrency'] =  self.concurrency
-        self.tts_engine = ModelRegistry.get_model_class(config['model_type']).from_pretrained(model_name_or_path, **kwargs)
+
+        self.tts_engine = ModelRegistry.get_model_class(
+            config['model_type']).from_pretrained(model_name_or_path, **kwargs)
+
         self.tts_engine.info = ModelRegistry.get_model_info(config['model_type'])
 
         self._start_orchestrator()

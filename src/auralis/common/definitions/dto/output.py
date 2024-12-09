@@ -28,7 +28,7 @@ class TTSOutput:
     is_finished: bool = False
     token_length: Optional[int] = None
 
-
+    parent_request_id: Optional[str] = None
     def __post_init__(self):
         if isinstance(self.array, bytes):
             self.array = np.frombuffer(self.array, dtype=np.float32)
