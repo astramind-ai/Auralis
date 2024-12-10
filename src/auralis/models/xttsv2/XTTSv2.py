@@ -172,7 +172,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         return vars(self.gpt_config) | vars(self.hifi_config) | {
             "concurrences": (self.first_and_third_concurrency,) * 3,
             "max_sizes":(
-            (vars(self.gpt_config)['max_text_tokens'] + 2),
+            (vars(self.gpt_config)['max_text_tokens']),
             None,
             vars(self.gpt_config)['max_text_tokens'] + vars(self.gpt_config)['max_audio_tokens'] + 32 + 5  # start and eos tokens and the conditioning sql
             ),
@@ -492,12 +492,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             Tuple[List[Union[int, List[int]]], List[torch.Tensor]]: A tuple containing
                 the prepared tokens and their embeddings.
         """
+
         async def embed_tokens(text_tokens: Union[torch.Tensor, List[torch.Tensor]]) -> List[torch.Tensor]:
-            # embeds = []
-            #if isinstance(text_tokens, list):
-            #    for list_element in text_tokens:
-            #        embeds.append(self.text_embedding(list_element) + self.text_pos_embedding(list_element))
-            #else:
             return self.text_embedding(text_tokens) + self.text_pos_embedding(text_tokens)
 
         async def prepare_token_and_textual_embeddings(tokens: Union[torch.Tensor, List[torch.Tensor]]) -> \
@@ -632,17 +628,28 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             prepared tokens, embeddings, and modifiers. Each context is ready for
             the generation phase.
         """
+        def is_nested(lst):
+            """
+            Check if a list contains any nested lists.
+
+            Args:
+                lst: A list of items.
+
+            Returns:
+                bool: True if the list contains any nested lists, False otherwise.
+            """
+            return any(isinstance(item, list) for item in lst)
 
         # Unpack results into separate lists
         tokens, gpt_embed_input, speaker_embeddings = await self.prepare_inputs_async(contexts)
 
         # Create new contexts for each generation combination
         contexts_for_generations = []
-        for (token_seq, single_gpt_embed_input) in enumerate(zip(tokens, gpt_embed_input)):
+        for token_seq, single_gpt_embed_input in zip(tokens, gpt_embed_input):
                 # Create a new context with updated values
                 new_context = contexts.copy()
                 new_context.update(
-                    tokens=token_seq,
+                    tokens=token_seq[0] if is_nested(token_seq) else token_seq,
                     decoding_embeddings_modifier=single_gpt_embed_input,
                     speaker_embeddings=speaker_embeddings
                 )
@@ -674,6 +681,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                     "sequence_length": len(context.tokens)
                 }
             }
+
         request_id =f"{context.request_id}"
         # Get audio token generator from VLLM
         token_generator = self.llm_engine.generate(

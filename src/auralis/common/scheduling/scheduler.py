@@ -21,16 +21,22 @@ class AsyncScheduler:
         while True:
             request_id, input_data, stage, output, completion_event = await self.input_queue.get()
 
-            batch_size =input_data.length(self.stage_name)
+            batch_size = input_data.length(self.stage_name)
             try:
                 async with self.resource_lock.lock_resource(batch_size):
-                    new_output = await self.processing_function(input_data)
+                    new_outputs = await self.processing_function(input_data)
 
                     next_stage = self.get_next_stage(stage)
                     if next_stage == "completed":
                         completion_event.set()
 
                     # Put the item back into the main queue with updated stage and output
-                    await orchestrator.queue.put((request_id, input_data, next_stage, new_output, completion_event))
+                    # here since we have multiple new_output(it is a list)
+                    # we have to put all of them in the queue(in order)
+                    [
+                        await orchestrator.queue.put(
+                            (request_id, new_output, next_stage, new_output, completion_event)
+                        ) for new_output in new_outputs
+                    ]
             except Exception as e: # TODO: better except
                 logger.error(f"Error processing request {request_id}: {e}")
