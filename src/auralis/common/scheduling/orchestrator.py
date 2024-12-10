@@ -15,6 +15,27 @@ logger = setup_logger(__name__)
 
 class Orchestrator:
     def __init__(self, engine: BaseAsyncTTSEngine):
+        """
+        Initialize the Orchestrator with the given TTS engine.
+
+        This constructor sets up the necessary schedulers and profiling for
+        the various phases of text-to-speech processing, including conditioning,
+        phonetics, and synthesis. It configures these schedulers based on the
+        engine's configuration, which includes concurrency settings and maximum sizes.
+
+        Args:
+            engine (BaseAsyncTTSEngine): The engine used for TTS processing. It
+                provides the functions for each processing phase and configuration
+                details.
+
+        Attributes:
+            schedulers (list): A list of AsyncScheduler instances for managing
+                different phases of TTS processing.
+            preprocessing_phase_fn (Callable): Function to preprocess input data.
+            queue (asyncio.Queue): Queue to manage requests for processing.
+            scheduler_tasks (list): List of tasks handling scheduling.
+            processing_task (Optional[asyncio.Task]): Task for processing the queue.
+        """
         conditioning_phase_fn = engine.conditioning_phase
         phonetics_phase_fn = engine.phonetic_phase
         synthesis_phase_fn = engine.speech_phase

@@ -7,6 +7,18 @@ from auralis.common.scheduling.dynamic_resource_lock import DynamicResourceLock
 logger = setup_logger(__name__)
 class AsyncScheduler:
     def __init__(self, resource_lock: DynamicResourceLock, processing_function: Callable, stage_name: str):
+        """
+        Initialize an AsyncScheduler.
+
+        Parameters
+        ----------
+        resource_lock : DynamicResourceLock
+            The lock that controls the resources available to the scheduler.
+        processing_function : Callable
+            The function that will be called to process each item in the queue.
+        stage_name : str
+            The name of the stage that this scheduler represents.
+        """
         self.resource_lock = resource_lock
         self.processing_function = processing_function
         self.stage_name = stage_name
@@ -17,7 +29,23 @@ class AsyncScheduler:
         return stages[stages.index(stage) + 1]
 
     async def process(self, orchestrator: 'Orchestrator'):
-        """Processes items, respecting resource limits and signaling completion."""
+        """
+        Process the items in the input queue.
+
+        This method runs indefinitely, pulling items from the input queue and
+        processing them with the provided processing function. The output of the
+        processing function is then put back into the main queue with the next
+        stage and output.
+
+        Parameters
+        ----------
+        orchestrator : Orchestrator
+            The orchestrator that owns this scheduler.
+
+        Returns
+        -------
+        None
+        """
         while True:
             request_id, input_data, stage, output, completion_event = await self.input_queue.get()
 

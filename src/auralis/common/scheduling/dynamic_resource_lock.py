@@ -4,7 +4,10 @@ from contextlib import asynccontextmanager
 class DynamicResourceLock:
     def __init__(self, max_size):
         """
-        Initialize a DynamicResourceLock instance.
+        This class represents a dynamic resource lock that controls the
+        availability of a shared resource. It provides methods to acquire and
+        release the resource, as well as the current number of occupied
+        resources.
 
         Args:
             max_size (int): The maximum capacity of the resource lock.
@@ -33,10 +36,10 @@ class DynamicResourceLock:
         by `acquire` to ensure the correct resource is released.
 
         Args:
-            task_id (str): The task ID returned by `acquire`.
+            item_size (int): The size of the resource to be acquired.
 
         Returns:
-            None
+            task_id (str): The task ID returned by `acquire`.
         """
 
         async with self._lock:
@@ -74,7 +77,23 @@ class DynamicResourceLock:
 
     @asynccontextmanager
     async def lock_resource(self, item_size):
-        """Context manager asincrono che acquisisce e rilascia la risorsa."""
+
+        """
+        A context manager that ensures only a certain amount of resources are used.
+
+        This context manager is used to ensure that only a certain amount of
+        resources are used at any given time. It is used to limit the number of
+
+        Args:
+            item_size (int): The size of the resource to be acquired.
+
+        Yields:
+            None ( the normal function flow)
+
+        Examples:
+            async with dynamic_lock.lock_resource(item_size):
+                # Do something
+        """
         task_id = await self.acquire(item_size)
         try:
             yield
