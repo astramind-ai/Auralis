@@ -47,11 +47,12 @@ class TTS:
 
     def _ensure_event_loop(self):
         """Ensures that an event loop exists and is set."""
-        try:
-            self.loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self.loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.loop)
+        if not self.loop:
+            try:
+                self.loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self.loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self.loop)
 
 
     @staticmethod
@@ -202,6 +203,7 @@ class TTS:
                         not supported.
         """
         from auralis.models.registry import ModelRegistry
+        self._ensure_event_loop()
 
         try:
             with open(os.path.join(model_name_or_path, 'config.json'), 'r') as f:
@@ -215,15 +217,14 @@ class TTS:
 
             except Exception as e:
                 raise ValueError(f"Could not load model from {model_name_or_path} neither locally or online: {e}")
-        if kwargs.get('scheduler_max_concurrency', None) is None:
-            kwargs['scheduler_max_concurrency'] =  self.concurrency
 
-        self.tts_engine = ModelRegistry.get_model_class(
-            config['model_type']).from_pretrained(model_name_or_path, **kwargs)
+        # Run potential async operations within from_pretrained in the event loop
+        async def _load_model():
+            model = ModelRegistry.get_model_class(config['model_type']).from_pretrained(model_name_or_path, **kwargs)
+            self._start_orchestrator() # to start form the correct loop
+            return model
 
-        self.tts_engine.info = ModelRegistry.get_model_info(config['model_type'])
-
-        self._start_orchestrator()
+        self.tts_engine = self.loop.run_until_complete(_load_model()) # to start form the correct loop
 
         return self
 
@@ -254,25 +255,20 @@ class TTS:
                            speaker_embeddings=speaker_embeddings)
 
     async def generate_speech_async(self, request: TTSRequest) -> Union[AsyncGenerator[TTSOutput, None], TTSOutput]:
-        """
-        Asynchronous speech generation method.
-
-        This method can be used to generate speech asynchronously. It will split the request
-        into multiple subrequests and run them in parallel.
+        """Generate speech asynchronously from text.
 
         Args:
-            request: The TTSRequest to generate speech for.
+            request (TTSRequest): The TTS request to process.
 
         Returns:
-            A generator of TTSOutput instances if `request.stream` is `True`, otherwise a single
-            TTSOutput instance.
-        """
-        if self._async == False:
-            raise RuntimeError("This instance was not created for async generation.")
+            Union[AsyncGenerator[TTSOutput, None], TTSOutput]: Audio output, either streamed or complete.
 
-        self._async = True
+        Raises:
+            RuntimeError: If instance was not created for async generation.
+        """
+        self._ensure_event_loop()
+
         async def process_chunks():
-            """Process chunks and yield them as they are generated."""
             chunks = []
             try:
                 async for chunk in self.orchestrator.run(
@@ -295,23 +291,18 @@ class TTS:
                 return result
 
     def generate_speech(self, request: TTSRequest) -> Union[Generator[TTSOutput, None, None], TTSOutput]:
-        """
-        Synchronous speech generation method.
-
-        This method can be used to generate speech synchronously. It will split the request
-        into multiple subrequests and run them in parallel.
+        """Generate speech synchronously from text.
 
         Args:
-            request: The TTSRequest to generate speech for.
+            request (TTSRequest): The TTS request to process.
 
         Returns:
-            A generator of TTSOutput instances if `request.stream` is `True`, otherwise a single
-            TTSOutput instance.
-        """
-        if self._async == True:
-            raise RuntimeError("This instance was created for async generation.")
+            Union[Generator[TTSOutput, None, None], TTSOutput]: Audio output, either streamed or complete.
 
-        self._async = False
+        Raises:
+            RuntimeError: If instance was created for async generation.
+        """
+        self._ensure_event_loop()
         requests = self._split_requests(request)
 
         if request.stream:
@@ -327,5 +318,3 @@ class TTS:
             await self.orchestrator.shutdown()
         if self.tts_engine and hasattr(self.tts_engine, 'shutdown'):
             await self.tts_engine.shutdown()
-        self.loop.call_soon_threadsafe(self.loop.stop())
-        self.loop_thread.join()
