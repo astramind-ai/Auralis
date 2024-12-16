@@ -43,10 +43,16 @@ class TTS:
         self.concurrency = scheduler_max_concurrency # kept for backwards compatibility
         self.logger = setup_logger(__file__)
 
-        self.loop = asyncio.new_event_loop()
-        self.loop_thread = threading.Thread(target=self._run_event_loop, daemon=True)
-        self.loop_thread.start()
-        self._async = None
+        self.loop = None
+
+    def _ensure_event_loop(self):
+        """Ensures that an event loop exists and is set."""
+        try:
+            self.loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+
 
     @staticmethod
     def _split_requests(request: TTSRequest, max_length: int = 100000) -> List[TTSRequest]:
@@ -65,11 +71,6 @@ class TTS:
     def _start_orchestrator(self):
         """Starts the orchestrator for request scheduling."""
         self.orchestrator = Orchestrator(self.tts_engine)
-
-    def _run_event_loop(self):
-        """Runs the asyncio event loop in a separate thread."""
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
 
     def _non_streaming_sync_wrapper(self, requests):
         """Synchronous wrapper for non-streaming requests."""
