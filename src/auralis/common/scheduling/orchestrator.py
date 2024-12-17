@@ -1,6 +1,7 @@
 import asyncio
 from collections import deque
 from collections.abc import AsyncGenerator
+from copy import deepcopy
 from typing import Callable
 
 from auralis import TTSOutput, setup_logger
@@ -8,7 +9,9 @@ from auralis.common.definitions.dto.requests import TTSRequest
 from auralis.common.metrics.performance import track_generation
 from auralis.common.scheduling.dynamic_resource_lock import DynamicResourceLock
 from auralis.common.scheduling.profiler import Profiler
+from auralis.common.scheduling.queues import AsyncPeekableQueue
 from auralis.common.scheduling.scheduler import AsyncScheduler
+from auralis.common.scheduling.trackable_event import TrackableEvent
 from auralis.models.base import BaseAsyncTTSEngine
 
 logger = setup_logger(__name__)
@@ -70,7 +73,7 @@ class Orchestrator:
             eng_config
         )
 
-        self.queue = asyncio.Queue()  # Single queue for all requests
+        self.queue = AsyncPeekableQueue()  # Single queue for all requests
         self.scheduler_tasks = []
         self.processing_task = None  # Task for processing the queue
 
@@ -82,52 +85,58 @@ class Orchestrator:
     async def run(self, request: TTSRequest) -> AsyncGenerator[TTSOutput, None]:
         if not self.scheduler_tasks:
             await self.start_schedulers()
-
+        finished = False
         request_id = request.request_id
-        input_data = await self.preprocessing_phase_fn(request)
-        completion_event = asyncio.Event()
-        await self.queue.put((request_id, input_data, "conditioning", None, completion_event))
+        conditions = await self.preprocessing_phase_fn(request)
+        completion_event = TrackableEvent()
+        for conditon in conditions:
+            await self.queue.put((conditon, "conditioning", deepcopy(completion_event)))
 
         # Start processing the queue if not already started
         if self.processing_task is None or self.processing_task.done():
             self.processing_task = asyncio.create_task(self.process_queue())
 
-        while True:
-            if completion_event.is_set():
+        while not finished:
+            peek = self.queue.peek()
+            if peek and peek[2].is_set():
                 # Find the completed item in the queue
-                for item in self.queue._queue:
-                    if item[0] == request_id and item[2] == "completed":
-                        logger.info(f"Request {request_id} finished")
-                        if isinstance(item[3], AsyncGenerator):
-                            async for output_item in item[3]:
-                                yield output_item  # Yield output items
-                        else:
-                            yield item[3]  # Yield the output
-                        # Remove the completed item from the queue
-                        self.queue._queue.remove(item)
-                        self.queue.task_done()
-                        break # Exit the inner loop after yielding the output for the completed request
+                item = await self.queue.get()
+                if item[0].request_id == request_id and item[2] == "completed":
+                    logger.info(f"Request {request_id} finished")
+                    if isinstance(item[3], AsyncGenerator):
+                        async for output_item in item[3]:
+                            yield output_item  # Yield output items
+                    else:
+                        yield item[3]  # Yield the output
+                    # Remove the completed item from the queue
+                    self.queue._queue.remove(item)
+                    self.queue.task_done()
+                    if completion_event.are_all_set():
+                        completion_event.clear()
+                        finished = True
+                    break # Exit the inner loop after yielding the output for the completed request
             else:
-                await asyncio.sleep(0)
+                await asyncio.sleep(0.01)
 
     async def process_queue(self):
         while True:
             # Get the next item from the queue (non-blocking)
-            request_id, input_data, stage, output, completion_event = await self.queue.get()
+            input_data, stage, completion_event = await self.queue.get()
 
             if stage != "completed":
                 # Find the appropriate scheduler and put the item in its input queue
                 for scheduler in self.schedulers:
                     if scheduler.stage_name == stage:
-                        await scheduler.input_queue.put((request_id, input_data, stage, output, completion_event))
+                        await scheduler.input_queue.put((input_data, stage, completion_event))
                         break  # Important: break out of the inner loop after forwarding the item
                 else:  # This 'else' clause is associated with the 'for' loop
                     # If no scheduler was found for the current stage, put the item back in the queue
-                    await self.queue.put((request_id, input_data, stage, output, completion_event))
+                    raise RuntimeError(f"Scheduler not found for stage: {stage}")
 
             else:
                 # If completed, put it back for the run() method to pick up
-                await self.queue.put((request_id, input_data, stage, output, completion_event))
+                await self.queue.put((input_data, stage, completion_event))
+                await asyncio.sleep(0.1) # Sleep for 0.1 seconds so that the run() method can pick up the completed item
 
             self.queue.task_done()
 

@@ -24,18 +24,16 @@ class Profiler:
             initial_memory_gb = initial_memory / (1024 ** 3)
             torch.cuda.reset_peak_memory_stats()
             torch.cuda.empty_cache()
-
+            tasks = []
             for function_data, function in zip(fake_factories, profiling_functions):
                 if not function_data:
                     # for vllm is useless
                     continue
                 data = function_data(config)
 
-                if inspect.isasyncgenfunction(function):
-                    await consume_asyncgen(function(data))
-                else:
-                    await function(data)
+                tasks.append(asyncio.create_task(function(data)))
 
+            await asyncio.gather(*tasks)
             peak_memory = torch.cuda.max_memory_allocated()
             current_memory = torch.cuda.memory_allocated()
 

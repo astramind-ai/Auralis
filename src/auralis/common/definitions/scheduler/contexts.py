@@ -13,8 +13,11 @@ from auralis.common.definitions.types.generator import Tokens, SpeakerEmbeddings
     Spectrogram
 
 
+
+
+
 @dataclass
-class GenerationContext(BatchableItem):
+class BaseContext(BatchableItem):
     """
     Represents a context for generating text-to-speech output.
 
@@ -32,56 +35,16 @@ class GenerationContext(BatchableItem):
         speaker_embeddings (Optional[SpeakerEmbeddings]): Embeddings for the speaker's voice.
         spectrogram (Optional[Spectrogram]): Spectrogram representation of the generated audio.
     """
-    start_time: Optional[float] = None
-    text: Optional[str] = None
-    language: Optional[str] = None
-    speaker_files: Union[Union[str,List[str]], Union[bytes,List[bytes]], Union[torch.Tensor, List[torch.Tensor]]] = None
-
-    # Generation parameters shared with ttsrequest
-    temperature: Optional[float] = 0.75
-    top_p: Optional[float] = 0.85
-    top_k: Optional[int] = 50
-    repetition_penalty: Optional[float] = 5.0
-    length_penalty: Optional[float] = 1.0
-    do_sample: Optional[bool] = True
-    stream: Optional[bool] = False
-
-    # Shared voice parameters
-    max_ref_length: Optional[int] = 60
-    gpt_cond_len: Optional[int] = 30
-    gpt_cond_chunk_len: Optional[int] = 4
-
-    # Generated states
-    tokens: Optional[Tokens] = None
-    # this is a modifier which will condition the decoding process in a autoregressive decoder only model
-    decoding_embeddings_modifier: Optional[DecodingEmbeddingsModifier] = None
-    speaker_embeddings: Optional[SpeakerEmbeddings] = None
-    spectrogram: Optional[Spectrogram] = None
-
-    # original request ref
-    parent_request_id: Optional[str] = None
-    request: Optional[TTSRequest] = None
-
-    def __post_init__(self):
-        self.request_id = uuid.uuid4()
-        if self.start_time is None:
-            self.start_time = time.time()
-
-    def length(self, key: str):
-        if key == 'conditioning':
-            return sum(t.shape[-1] for t in self.tokens)
-        elif key == 'phonetic':
-            return self.max_ref_length
-        elif key == 'speech':
-            return 0
+    request_id: str
+    start_time: float
 
     @classmethod
-    def from_request(cls, request: TTSRequest, **kwargs) -> 'GenerationContext':
+    def from_request(cls, request: TTSRequest, **kwargs) -> 'BaseContext':
         """
         Crea un GenerationContext da un TTSRequest.
         """
         shared_fields = {}
-        self_keys = vars(cls).keys()
+        self_keys = cls.__dataclass_fields__.keys() # noqa
         for k, v in vars(request).items():
             if k in self_keys:
                 shared_fields[k] = v
@@ -116,3 +79,66 @@ class GenerationContext(BatchableItem):
 
     def copy(self):
         return copy.deepcopy(self)
+
+
+@dataclass
+class ConditioningContext(BaseContext):
+    """
+    Represents a context for conditioning text-to-speech output (first phase).
+
+    This context is used for the first phase of text-to-speech processing.  It
+    contains the text to be processed and the speaker audio files.  The
+    ConditioningContext is used to create the conditioning data required for
+    the second phase of text-to-speech processing.
+
+    Attributes:
+        tokens (Tokens): Tokens generated from the input text.
+        speaker_files (Union[Union[str, List[str]], Union[bytes, List[bytes]]]): Speaker audio files or data.
+        max_ref_length (Optional[int]): Maximum reference length for voice conditioning.
+        gpt_cond_len (Optional[int]): Length of GPT conditioning.
+        gpt_cond_chunk_len (Optional[int]): Chunk length for GPT conditioning.
+    """
+    tokens: Tokens
+    speaker_files: Union[
+        Union[str, List[str]], Union[bytes, List[bytes]], Union[torch.Tensor, List[torch.Tensor]]]
+    # Shared voice parameters
+    max_ref_length: Optional[int] = 60
+    gpt_cond_len: Optional[int] = 30
+    gpt_cond_chunk_len: Optional[int] = 4
+
+    @property
+    def length(self):
+        return sum(t.shape[-1] for t in self.tokens)
+
+
+
+@dataclass
+class PhoneticContext(BaseContext):
+
+    tokens: Tokens
+    decoding_embeddings_modifier: Optional[DecodingEmbeddingsModifier] = None
+    speaker_embeddings: Optional[SpeakerEmbeddings] = None
+
+    # Generation parameters for the gpt model
+    temperature: Optional[float] = 0.75
+    top_p: Optional[float] = 0.85
+    top_k: Optional[int] = 50
+    repetition_penalty: Optional[float] = 5.0
+    length_penalty: Optional[float] = 1.0
+    do_sample: Optional[bool] = True
+    stream: Optional[bool] = False
+
+    @property
+    def length(self):
+        return len(self.tokens)
+
+
+@dataclass
+class SpeechContext(BaseContext):
+    spectrogram: Spectrogram
+    tokens: Tokens
+    speaker_embeddings: Optional[SpeakerEmbeddings] = None
+
+    @property
+    def length(self):
+        return self.spectrogram.shape[0] * self.spectrogram.shape[1]

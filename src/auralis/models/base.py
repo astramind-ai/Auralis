@@ -11,7 +11,7 @@ import torchaudio
 
 from auralis.common.definitions.dto.output import TTSOutput
 from auralis.common.definitions.dto.requests import TTSRequest
-from auralis.common.definitions.scheduler.context import GenerationContext
+from auralis.common.definitions.scheduler.contexts import ConditioningContext, PhoneticContext, SpeechContext
 
 
 class BaseAsyncTTSEngine(ABC, torch.nn.Module):
@@ -25,7 +25,7 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
 
     ### Phases ###
     @abstractmethod
-    async def preprocess_inputs(self, request: TTSRequest) -> GenerationContext:
+    async def preprocess_inputs(self, request: TTSRequest) -> List[ConditioningContext]:
         """
         Preprocesses a TTS request, returning a GenerationContext object.
         This method should be implemented by subclasses.
@@ -41,8 +41,8 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
     @abstractmethod
     async def conditioning_phase(
             self,
-            request: TTSRequest,
-    ) -> List[GenerationContext]:
+            context: ConditioningContext,
+    ) -> List[PhoneticContext]:
         """
         This phase should be where the audio conditioning is generated.
         in XTTSv2 this is composed by a text embedding and a speaker embedding, as well as the voice cloning embedding
@@ -58,8 +58,8 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
     @abstractmethod
     async def phonetic_phase(
             self,
-            context: GenerationContext
-    ) -> GenerationContext:
+            context: PhoneticContext
+    ) -> SpeechContext:
         """
         This phase should be where the audio tokens are generated.
         In XTTSv2 this is the part where the GPT model generates the phonetic tokens
@@ -75,7 +75,7 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
     @abstractmethod
     async def speech_phase(
             self,
-            context: GenerationContext,
+            context: SpeechContext,
     ) -> TTSOutput:
         """
         This phase should be where the audio is generated.
@@ -166,27 +166,27 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
         audio.clip_(-1, 1)
         return audio
 
-    @asynccontextmanager
-    async def cuda_memory_manager(self):
-        """
-        Context manager to manage CUDA memory.
-
-        This context manager ensures that the CUDA memory is deallocated
-        after the code block is finished. It also ensures that the memory
-        is deallocated even if an exception is raised.
-
-        Notes:
-            - This context manager is designed to be used with the `async with`
-              statement. It is not thread-safe and should not be used with
-              the `with` statement.
-            - The `torch.cuda.empty_cache()` call is necessary to deallocate
-              the memory, but it can take some time. To avoid blocking the
-              event loop, we use `asyncio.sleep(0.1)` to give other tasks a
-              chance to run.
-        """
-        try:
-            yield
-        finally:
-            torch.cuda.synchronize()
-            await asyncio.sleep(0.1)
-            torch.cuda.empty_cache()
+    # @asynccontextmanager
+    # async def cuda_memory_manager(self):
+    #     """
+    #     Context manager to manage CUDA memory.
+    #
+    #     This context manager ensures that the CUDA memory is deallocated
+    #     after the code block is finished. It also ensures that the memory
+    #     is deallocated even if an exception is raised.
+    #
+    #     Notes:
+    #         - This context manager is designed to be used with the `async with`
+    #           statement. It is not thread-safe and should not be used with
+    #           the `with` statement.
+    #         - The `torch.cuda.empty_cache()` call is necessary to deallocate
+    #           the memory, but it can take some time. To avoid blocking the
+    #           event loop, we use `asyncio.sleep(0.1)` to give other tasks a
+    #           chance to run.
+    #     """
+    #     try:
+    #         yield
+    #     finally:
+    #         torch.cuda.synchronize()
+    #         await asyncio.sleep(0.1)
+    #         torch.cuda.empty_cache()

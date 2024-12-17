@@ -9,7 +9,7 @@ import torch
 
 from auralis.common.definitions.batch.batchable_item import BatchableItem
 from auralis.common.definitions.dto.requests import TTSRequest
-from auralis.common.definitions.scheduler.context import GenerationContext
+from auralis.common.definitions.scheduler.contexts import ConditioningContext
 
 
 @dataclass

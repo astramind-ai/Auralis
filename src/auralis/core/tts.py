@@ -69,9 +69,9 @@ class TTS:
             for chunk in text_chunks
         ]
 
-    def _start_orchestrator(self):
+    def _start_orchestrator(self, tts_engine):
         """Starts the orchestrator for request scheduling."""
-        self.orchestrator = Orchestrator(self.tts_engine)
+        self.orchestrator = Orchestrator(tts_engine)
 
     def _non_streaming_sync_wrapper(self, requests):
         """Synchronous wrapper for non-streaming requests."""
@@ -221,7 +221,7 @@ class TTS:
         # Run potential async operations within from_pretrained in the event loop
         async def _load_model():
             model = ModelRegistry.get_model_class(config['model_type']).from_pretrained(model_name_or_path, **kwargs)
-            self._start_orchestrator() # to start form the correct loop
+            self._start_orchestrator(model) # to start form the correct loop
             return model
 
         self.tts_engine = self.loop.run_until_complete(_load_model()) # to start form the correct loop

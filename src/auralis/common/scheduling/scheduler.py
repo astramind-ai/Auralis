@@ -25,7 +25,7 @@ class AsyncScheduler:
         self.input_queue = asyncio.Queue()
 
     def get_next_stage(self, stage: str):
-        stages = ['conditioning', 'phonetic', 'speech']
+        stages = ['conditioning', 'phonetic', 'synthesis', 'completed']
         return stages[stages.index(stage) + 1]
 
     async def process(self, orchestrator: 'Orchestrator'):
@@ -47,11 +47,10 @@ class AsyncScheduler:
         None
         """
         while True:
-            request_id, input_data, stage, output, completion_event = await self.input_queue.get()
+            input_data, stage, completion_event = await self.input_queue.get()
 
-            batch_size = input_data.length(self.stage_name)
             try:
-                async with self.resource_lock.lock_resource(batch_size):
+                async with self.resource_lock.lock_resource(input_data.length):
                     new_outputs = await self.processing_function(input_data)
 
                     next_stage = self.get_next_stage(stage)
@@ -61,10 +60,15 @@ class AsyncScheduler:
                     # Put the item back into the main queue with updated stage and output
                     # here since we have multiple new_output(it is a list)
                     # we have to put all of them in the queue(in order)
-                    [
+                    if isinstance(new_outputs, list):
+                        [
                         await orchestrator.queue.put(
-                            (request_id, new_output, next_stage, new_output, completion_event)
+                            (new_output, next_stage, completion_event)
                         ) for new_output in new_outputs
                     ]
+                    else:
+                        await orchestrator.queue.put(
+                            (new_outputs, next_stage, completion_event)
+                        )
             except Exception as e: # TODO: better except
-                logger.error(f"Error processing request {request_id}: {e}")
+                logger.error(f"Error processing request {input_data.request_id}: {e}")

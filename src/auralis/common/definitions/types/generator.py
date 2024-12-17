@@ -5,7 +5,7 @@ from typing import List, Union
 import torch
 
 Token = Union[int, torch.Tensor]
-Tokens = List[Token]
+Tokens = Union[Token, List[Token]]
 
 SpeakerEmbeddings = torch.Tensor
 DecodingEmbeddingsModifier = torch.Tensor

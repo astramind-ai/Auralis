@@ -3,10 +3,10 @@ from typing import Union, Callable, Coroutine, Any, AsyncGenerator
 
 from auralis.common.definitions.dto.output import TTSOutput
 from auralis.common.definitions.dto.requests import TTSRequest
-from auralis.common.definitions.scheduler.context import GenerationContext
+from auralis.common.definitions.scheduler.contexts import ConditioningContext
 
 BatcherFunction = Callable[
-                     [Union[TTSRequest, GenerationContext]],
+                     [Union[TTSRequest, ConditioningContext]],
                       Coroutine[Any, Any, Union[
-                          list[GenerationContext], GenerationContext, AsyncGenerator[TTSOutput, None]]]
+                          list[ConditioningContext], ConditioningContext, AsyncGenerator[TTSOutput, None]]]
                  ]

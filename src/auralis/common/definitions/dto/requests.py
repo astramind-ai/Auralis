@@ -4,6 +4,7 @@ import functools
 import hashlib
 import io
 import json
+import time
 import uuid
 from dataclasses import asdict, field
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ import soundfile as sf
 from cachetools import LRUCache
 
 from auralis.common.definitions.batch.batchable_item import BatchableItem
+from auralis.common.definitions.types.requests import SupportedLanguages, TextStringOrGenerator, SpeakerFiles
 from auralis.common.logging.logger import setup_logger
 from auralis.common.definitions.enhancer import EnhancedAudioProcessor, AudioPreprocessingConfig
 
@@ -71,30 +73,10 @@ def cached_processing(maxsize=128):
     return decorator
 
 
-SupportedLanguages = Literal[
-        "en",
-        "es",
-        "fr",
-        "de",
-        "it",
-        "pt",
-        "pl",
-        "tr",
-        "ru",
-        "nl",
-        "cs",
-        "ar",
-        "zh-cn",
-        "hu",
-        "ko",
-        "ja",
-        "hi",
-        "auto",
-        ""
-    ]
+
 
 @lru_cache(maxsize=1024)
-def get_language(text: str):
+def get_language(text: str)->SupportedLanguages:
     """
     Detect the language of a given text using langid.
 
@@ -162,9 +144,9 @@ class TTSRequest:
         top_k (int): Top-k sampling parameter for generation.
     """
     # Request metadata
-    text: Union[AsyncGenerator[str, None], str, List[str]]
+    text: TextStringOrGenerator
 
-    speaker_files: Union[Union[str,List[str]], Union[bytes,List[bytes]]] = None
+    speaker_files: SpeakerFiles = None
     context_partial_function: Optional[Callable] = None
 
     start_time: Optional[float] = None
@@ -196,7 +178,7 @@ class TTSRequest:
         # for now just a placeholder, but it'll check form the model registry some predefined values
 
     def __post_init__(self):
-
+        self.start_time = time.time()
         if self.language == 'auto' and len(self.text) > 0:
             self.language = get_language(self.text)
 
@@ -209,7 +191,7 @@ class TTSRequest:
                                f"but only 5 are supported. we'll take the first 5.")
                 self.speaker_files = self.speaker_files[:5]  # FIXME(mlinmg): for xttsv2 might need adjustments later
 
-            self.speaker_files = [self.preprocess_audio(f, self.audio_config) for f in self.speaker_files]
+            self.speaker_files = [self.preprocess_audio(f) for f in self.speaker_files]
 
         if self.max_ref_length > 60:
             logger.warning(f"Maximum reference length is set to {self.max_ref_length}. "
@@ -237,7 +219,7 @@ class TTSRequest:
             self.language = get_language(self.text)
 
     @cached_processing()
-    def preprocess_audio(self, audio_source: Union[str, bytes], audio_config: AudioPreprocessingConfig) -> str:
+    def preprocess_audio(self, audio_source: Union[str, bytes]) -> str:
         """
         Preprocesses an audio source (either a file path or a bytes object).
 

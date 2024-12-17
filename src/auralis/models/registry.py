@@ -29,13 +29,14 @@ class ModelRegistry:
 
         return decorator
 
-    @classmethod
-    def get_model_info(cls, model_type: SupportedModelTypes) -> Optional[dict]:
-        return cls._models.get(model_type)
+    def _get_model_info(self, model_type: SupportedModelTypes) -> Optional[dict]:
+        return self._models.get(model_type)
 
     @classmethod
     def get_model_class(self, model_type: SupportedModelTypes):
-        return self._models[model_type]['class']
+        model_class = self._models[model_type]['class']
+        model_class.info = self._models.get(model_type)
+        return model_class
 
 # Decorator to register a model
 def register_tts_model(model_type: SupportedModelTypes, **kwargs):
