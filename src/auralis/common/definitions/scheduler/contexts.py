@@ -35,8 +35,11 @@ class BaseContext(BatchableItem):
         speaker_embeddings (Optional[SpeakerEmbeddings]): Embeddings for the speaker's voice.
         spectrogram (Optional[Spectrogram]): Spectrogram representation of the generated audio.
     """
-    request_id: str
+    parent_request_id: str
     start_time: float
+
+    def __post_init__(self):
+        self.request_id = uuid.uuid4().hex
 
     @classmethod
     def from_request(cls, request: TTSRequest, **kwargs) -> 'BaseContext':

@@ -51,7 +51,7 @@ def mock_context_data(ctx):
                ] * ctx['concurrences'][0],
         speaker_files=placeholder_audio_tensor,
         start_time=time.time(),
-        request_id=uuid.uuid4().hex
+        parent_request_id=uuid.uuid4().hex
     )
 
 def mock_synth_data(ctx):
@@ -478,14 +478,14 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 for text_token in text_tokens:
                     conditioning_context.append(
                         ConditioningContext.from_request(
-                            request, tokens=await elaborate_tokens(text_token)
+                            request, parent_request_id=request.request_id, tokens=await elaborate_tokens(text_token)
                         )
                     )
                 return conditioning_context
             else:
                 text_tokens = self.tokenizer(request.text, lang=[request.language])['input_ids'][0]
                 text_tokens = await elaborate_tokens(text_tokens)
-                return [ConditioningContext.from_request(request, tokens=text_tokens)]
+                return [ConditioningContext.from_request(request,  parent_request_id=request.request_id, tokens=text_tokens)]
 
 
     async def prepare_text_tokens_and_embeddings_async(self, context: ConditioningContext) \
@@ -663,7 +663,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
                 contexts_for_generations.append(
                     PhoneticContext(
-                    request_id=context.request_id,
+                    parent_request_id=context.parent_request_id,
                     start_time=context.start_time,
                     tokens=token_seq[0] if is_nested(token_seq) else token_seq,
                     decoding_embeddings_modifier=single_gpt_embed_input,
@@ -723,7 +723,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 ),
                 speaker_embeddings=context.speaker_embeddings,
                 tokens = list(output.outputs[0].token_ids),
-                request_id=context.request_id,
+                parent_request_id=context.parent_request_id,
                 start_time=context.start_time
                 )
         if speech_context is None:

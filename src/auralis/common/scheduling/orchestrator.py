@@ -96,12 +96,12 @@ class Orchestrator:
         if self.processing_task is None or self.processing_task.done():
             self.processing_task = asyncio.create_task(self.process_queue())
 
-        while not finished:
+        while not completion_event.are_all_set():
             peek = self.queue.peek()
             if peek and peek[2].is_set():
                 # Find the completed item in the queue
                 item = await self.queue.get()
-                if item[0].request_id == request_id and item[2] == "completed":
+                if item[0].parent_request_id == request_id and item[2] == "completed":
                     logger.info(f"Request {request_id} finished")
                     if isinstance(item[3], AsyncGenerator):
                         async for output_item in item[3]:
@@ -109,11 +109,9 @@ class Orchestrator:
                     else:
                         yield item[3]  # Yield the output
                     # Remove the completed item from the queue
-                    self.queue._queue.remove(item)
                     self.queue.task_done()
                     if completion_event.are_all_set():
                         completion_event.clear()
-                        finished = True
                     break # Exit the inner loop after yielding the output for the completed request
             else:
                 await asyncio.sleep(0.01)
