@@ -808,7 +808,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                         # yield the audio output
                         yield TTSOutput(array= wav,
                                         start_time = request.start_time,
-                                        token_length = len(output.outputs[0].token_ids)
+                                        token_length = len(output.outputs[0].token_ids),
+                                        tokens_list = list(output.outputs[0].token_ids),
                                         )
 
 
