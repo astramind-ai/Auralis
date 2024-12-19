@@ -26,7 +26,7 @@ class TTSOutput:
     start_time: Optional[float] = None
     end_time: Optional[float] = None
     token_length: Optional[int] = None
-
+    tokens_list: Optional[List[int]] = None
 
     def __post_init__(self):
         if isinstance(self.array, bytes):
@@ -115,9 +115,13 @@ class TTSOutput:
         # Concatenate audio
         combined_audio = np.concatenate([out.array for out in outputs])
 
+        tokens_list = []
+        [tokens_list.extend(list(out.tokens_list)) for out in outputs]
+
         # Use sample rate of first output
         return TTSOutput(
             array=combined_audio,
+            tokens_list=tokens_list,
             sample_rate=outputs[0].sample_rate
         )
 
