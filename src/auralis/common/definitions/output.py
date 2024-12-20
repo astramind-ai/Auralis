@@ -113,7 +113,7 @@ class TTSOutput:
             New TTSOutput instance with concatenated audio
         """
         # Concatenate audio
-        combined_audio = np.concatenate([out.array for out in outputs])
+        combined_audio = np.concatenate([np.concatenate((out.array, np.zeros([int(10000)], dtype="int16"))) for out in outputs])
 
         # Use sample rate of first output
         return TTSOutput(
