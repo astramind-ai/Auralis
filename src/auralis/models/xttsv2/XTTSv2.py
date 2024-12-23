@@ -77,7 +77,7 @@ def mock_synth_data(ctx):
         speaker_embeddings=decoding_conditioning,
         tokens=mock_tokens,
         start_time=time.time(),
-        request_id=uuid.uuid4().hex
+        parent_request_id=uuid.uuid4().hex
     )
 
 

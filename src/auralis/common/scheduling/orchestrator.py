@@ -72,6 +72,7 @@ class Orchestrator:
             (conditioning_phase_fn, phonetics_phase_fn, synthesis_phase_fn),
             eng_config
         )
+        self.queue_lock = asyncio.Lock()
 
         self.queue = AsyncPeekableQueue()  # Single queue for all requests
         self.scheduler_tasks = []
@@ -85,29 +86,30 @@ class Orchestrator:
     async def run(self, request: TTSRequest) -> AsyncGenerator[TTSOutput, None]:
         if not self.scheduler_tasks:
             await self.start_schedulers()
-        finished = False
+
         request_id = request.request_id
         conditions = await self.preprocessing_phase_fn(request)
         completion_event = TrackableEvent()
-        for conditon in conditions:
-            await self.queue.put((conditon, "conditioning", deepcopy(completion_event)))
+        async with self.queue_lock:
+            for conditon in conditions:
+                await self.queue.put((conditon, "conditioning", deepcopy(completion_event)))
 
         # Start processing the queue if not already started
         if self.processing_task is None or self.processing_task.done():
             self.processing_task = asyncio.create_task(self.process_queue())
 
-        while not completion_event.are_all_set():
+        while not completion_event.are_all_set(): # you should break and exit
             peek = self.queue.peek()
             if peek and peek[2].is_set():
                 # Find the completed item in the queue
                 item = await self.queue.get()
-                if item[0].parent_request_id == request_id and item[2] == "completed":
+                if item[0].parent_request_id == request_id and item[1] == "completed":
                     logger.info(f"Request {request_id} finished")
-                    if isinstance(item[3], AsyncGenerator):
-                        async for output_item in item[3]:
+                    if isinstance(item[0], AsyncGenerator):
+                        async for output_item in item[0]:
                             yield output_item  # Yield output items
                     else:
-                        yield item[3]  # Yield the output
+                        yield item[0]  # Yield the output
                     # Remove the completed item from the queue
                     self.queue.task_done()
                     if completion_event.are_all_set():
@@ -126,15 +128,16 @@ class Orchestrator:
                 for scheduler in self.schedulers:
                     if scheduler.stage_name == stage:
                         await scheduler.input_queue.put((input_data, stage, completion_event))
-                        break  # Important: break out of the inner loop after forwarding the item
-                else:  # This 'else' clause is associated with the 'for' loop
+                        break
+                else:
                     # If no scheduler was found for the current stage, put the item back in the queue
                     raise RuntimeError(f"Scheduler not found for stage: {stage}")
 
             else:
                 # If completed, put it back for the run() method to pick up
                 await self.queue.put((input_data, stage, completion_event))
-                await asyncio.sleep(0.1) # Sleep for 0.1 seconds so that the run() method can pick up the completed item
+                break
+
 
             self.queue.task_done()
 

@@ -61,11 +61,8 @@ class AsyncScheduler:
                     # here since we have multiple new_output(it is a list)
                     # we have to put all of them in the queue(in order)
                     if isinstance(new_outputs, list):
-                        [
-                        await orchestrator.queue.put(
-                            (new_output, next_stage, completion_event)
-                        ) for new_output in new_outputs
-                    ]
+                        for new_output in new_outputs:
+                            await orchestrator.queue.put((new_output, next_stage, completion_event))
                     else:
                         await orchestrator.queue.put(
                             (new_outputs, next_stage, completion_event)
