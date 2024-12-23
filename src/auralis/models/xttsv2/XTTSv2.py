@@ -35,6 +35,8 @@ from .components.vllm.hijack import ExtendedSamplingParams, LogitsRepetitionPena
 from .components.tts.layers.xtts.hifigan_decoder import HifiDecoder
 from .components.tts.layers.xtts.latent_encoder import ConditioningEncoder
 from .components.tts.layers.xtts.perceiver_encoder import PerceiverResampler
+from ...core.async_lru_cache import AsyncLRUCache
+
 
 class XTTSv2Engine(BaseAsyncTTSEngine):
     """Asynchronous XTTS model implementation using VLLM's AsyncEngine.
@@ -145,8 +147,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.init_vllm_engine(self.max_concurrency)
 
         # Semaphore for concurrency control of the encoding process
-        self.encoder_semaphore = asyncio.BoundedSemaphore(semaphore_concurrency)
-        self.decoder_semaphore = asyncio.BoundedSemaphore(semaphore_concurrency) # empirically found a good value
         self.eval()
 
     def get_memory_usage_curve(self):
@@ -318,8 +318,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             torch.Tensor: Speaker embedding tensor.
         """
         audio_16k = torchaudio.functional.resample(audio, sr, 16000)
-        async with self.decoder_semaphore:
-            return (
+        return (
                 self.hifigan_decoder.speaker_encoder.forward(audio_16k.to(self.device), l2_norm=True)
                 .unsqueeze(-1)
                 .to(self.device)
@@ -574,6 +573,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         return text_tokens, cond_latents, speaker_embeddings
 
+    @AsyncLRUCache()
     async def get_audio_conditioning(
             self,
             audio_reference: [str, Path],
@@ -599,18 +599,17 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             Tuple: GPT conditioning latents and speaker embeddings.
         """
         """Async version of get_conditioning_latents with concurrency control."""
-        async with self.encoder_semaphore:
-            # Run the original get_conditioning_latents in executor
-            result = await self.get_conditioning_latents(
-                audio_reference,
-                max_ref_length,
-                gpt_cond_len,
-                gpt_cond_chunk_len,
-                librosa_trim_db,
-                sound_norm_refs,
-                load_sr
-            )
-            return result
+        # Run the original get_conditioning_latents in executor
+        result = await self.get_conditioning_latents(
+            audio_reference,
+            max_ref_length,
+            gpt_cond_len,
+            gpt_cond_chunk_len,
+            librosa_trim_db,
+            sound_norm_refs,
+            load_sr
+        )
+        return result
 
     async def get_model_logits(
             self,
@@ -688,8 +687,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     @torch.inference_mode()
     async def get_generation_context(self,
                                      request: TTSRequest,
-                                     gpt_cond_latent: Optional[torch.Tensor] = None,
-                                     speaker_embeddings: Optional[torch.Tensor] = None,
                                      ) -> TokenGeneratorsAndPossiblyConditioning:
         """Get generation context for speech synthesis.
 
@@ -701,22 +698,17 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         Returns:
             TokenGeneratorsAndPossiblyConditioning: Token generators and conditioning tensors.
         """
-        if gpt_cond_latent is None or speaker_embeddings is None:
-            # Prepare input with conditioning
-            tokens_list, gpt_embed_inputs, speaker_embeddings = await self.prepare_inputs_async(
-                request.text,
-                request.language,
-                request.speaker_files,
-                request.max_ref_length,
-                request.gpt_cond_len,
-                request.gpt_cond_chunk_len,
-                split_text=True  # Split text to avoid OOM on big texts
-            )
-        else:
-            tokens_list, text_embeddings = await self.prepare_text_tokens_async(request.text,
-                                                                                request.language,
-                                                                                split_text=True)
-            gpt_embed_inputs = await self._merge_conditioning(text_embeddings, gpt_cond_latent)
+        # Prepare input with conditioning
+        tokens_list, gpt_embed_inputs, speaker_embeddings = await self.prepare_inputs_async(
+            request.text,
+            request.language,
+            request.speaker_files,
+            request.max_ref_length,
+            request.gpt_cond_len,
+            request.gpt_cond_chunk_len,
+            split_text=True  # Split text to avoid OOM on big texts
+        )
+
 
         # Start all requests in parallel
         generators = []
@@ -781,7 +773,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
 
         async for output in generator:
-
+            # TODO, to lower ttfb we can do output delta here at least until the generation do't accomulate enough tokens
             if output.finished:
                 # get the hidden states
                 hidden_states = await self.get_model_logits(
