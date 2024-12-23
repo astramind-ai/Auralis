@@ -15,7 +15,7 @@ def coqui_v200_model(model_path, speaker_path, output_path):
       """
     try:
         # Load the model, with the tokenizer size which is set to 6153 for v2.0.0, and the gpt model
-        tts = TTS().from_pretrained(model_path, gpt_model="path_to/gpt", tokenizer_size=6153)
+        tts = TTS().from_pretrained(model_path, gpt_model="/path_to/gpt", tokenizer_size=6153)
 
         # Create a TTS request
         request = TTSRequest(
@@ -39,7 +39,7 @@ def coqui_v200_model(model_path, speaker_path, output_path):
 
 if __name__ == "__main__":
     # Define paths
-    model_path = "path_to/core_xttsv2/"  # Path to your converted model directory
+    model_path = "/path_to/core_xttsv2/"  # Path to your converted model directory
     speaker_path = "../tests/resources/audio_samples/female.wav" # Path to a reference speaker audio file
     output_path = "output_v200.wav"
 
