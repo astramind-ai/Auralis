@@ -431,19 +431,53 @@ class SEBasicBlock(nn.Module):
         return x
 
 
-def set_init_dict(model_dict, checkpoint_state, c):
+def set_init_dict(model_dict, checkpoint_state, c, force_tokenizer_size):
     # Partial initialization: if there is a mismatch with new and old layer, it is skipped.
     for k, v in checkpoint_state.items():
         if k not in model_dict:
             print(f" | > Layer missing in the model definition: {k}")
     pretrained_dict = {k: v for k, v in checkpoint_state.items() if k in model_dict}
+
     # 2. filter out different size layers
     pretrained_dict = {k: v for k, v in pretrained_dict.items() if v.numel() == model_dict[k].numel()}
-    # 3. skip reinit layers
+
     if c.has("reinit_layers") and c.reinit_layers is not None:
         for reinit_layer_name in c.reinit_layers:
             pretrained_dict = {k: v for k, v in pretrained_dict.items() if reinit_layer_name not in k}
-    # 4. overwrite entries in the existing state dict
+
+    # 3. handle text_embedding, text_head if the sizes does not match
+    if force_tokenizer_size and 'text_embedding.weight' in model_dict and 'text_embedding.weight' in pretrained_dict:
+        if pretrained_dict['text_embedding.weight'].shape[0] != model_dict['text_embedding.weight'].shape[0]:
+            old_size = pretrained_dict['text_embedding.weight'].shape[0]
+            new_size = model_dict['text_embedding.weight'].shape[0]
+            embedding_dim =  model_dict['text_embedding.weight'].shape[1]
+
+            print(f" | > resizing embedding layer from {old_size} to {new_size}")
+
+            # Resize the embedding
+            new_weights = torch.randn(new_size,embedding_dim, dtype=pretrained_dict['text_embedding.weight'].dtype)
+            new_weights[:pretrained_dict['text_embedding.weight'].shape[0]] = pretrained_dict['text_embedding.weight']
+            pretrained_dict['text_embedding.weight'] = new_weights
+
+    if force_tokenizer_size and 'text_head.weight' in model_dict and 'text_head.weight' in pretrained_dict:
+        if pretrained_dict['text_head.weight'].shape[0] != model_dict['text_head.weight'].shape[0]:
+            old_size = pretrained_dict['text_head.weight'].shape[0]
+            new_size = model_dict['text_head.weight'].shape[0]
+            embedding_dim =  model_dict['text_head.weight'].shape[1]
+
+            print(f" | > resizing text head layer from {old_size} to {new_size}")
+
+            # Resize the weights
+            new_weights = torch.randn(new_size,embedding_dim, dtype=pretrained_dict['text_head.weight'].dtype)
+            new_weights[:pretrained_dict['text_head.weight'].shape[0]] = pretrained_dict['text_head.weight']
+            pretrained_dict['text_head.weight'] = new_weights
+
+            # Resize the bias
+            new_bias = torch.randn(new_size, dtype=pretrained_dict['text_head.bias'].dtype)
+            new_bias[:pretrained_dict['text_head.bias'].shape[0]] = pretrained_dict['text_head.bias']
+            pretrained_dict['text_head.bias'] = new_bias
+
+
     model_dict.update(pretrained_dict)
     print(f" | > {len(pretrained_dict)} / {len(model_dict)} layers are restored.")
     return model_dict

@@ -274,6 +274,13 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         gpt_config = XTTSGPTConfig(**config['gpt_config'])
         hifi_config = XTTSConfig(**config)
 
+
+        # read tokenizer_size and override the config if needed
+        tokenizer_size = kwargs.get('tokenizer_size', None)
+        if tokenizer_size is not None:
+            gpt_config.vocab_size = tokenizer_size
+            gpt_config.number_text_tokens = tokenizer_size
+
         # Initialize model
         model = cls(
             hifi_config=hifi_config,
@@ -281,6 +288,10 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             tensor_parallel_size=tensor_parallel_size,
             pipeline_parallel_size=pipeline_parallel_size,
             **kwargs
+        )
+        # load the tokenizer with a custom vocab size
+        model.tokenizer = XTTSTokenizerFast.from_pretrained(
+            model.gpt_model, force_tokenizer_size=tokenizer_size
         )
 
         # Load model weights

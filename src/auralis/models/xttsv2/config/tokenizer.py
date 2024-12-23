@@ -754,6 +754,7 @@ class XTTSTokenizerFast(PreTrainedTokenizerFast):
             eos_token: str = "[STOP]",
             auto_map: dict = {"AutoTokenizer": ["AstraMindAI/xtts2-gpt--tokenizer.XTTSTokenizerFast", None]},
             clean_up_tokenization_spaces: bool = True,
+            force_tokenization_size: Optional[int] = None,
             **kwargs
     ):
         if tokenizer_object is None and vocab_file is not None:

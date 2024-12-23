@@ -24,7 +24,7 @@ def download_repo_files(repo_id, output_path, exclude_extensions=['*.safetensors
 
 
 
-def convert_checkpoint(pytorch_checkpoint_path, output_dir, args):
+def convert_checkpoint(pytorch_checkpoint_path, output_dir, force_tokenizer_size, args):
     """
     Convert PyTorch checkpoint to SafeTensors format, mapping weights to GPT2 or XTTSv2 models
     based on specific substrings.
@@ -32,6 +32,8 @@ def convert_checkpoint(pytorch_checkpoint_path, output_dir, args):
     Args:
         pytorch_checkpoint_path: Path to input PyTorch checkpoint
         output_dir: Directory to save the output SafeTensors files
+        force_tokenizer_size (int): The size to resize embeddings if needed
+        args: argparser objects to pass other args
     """
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
@@ -104,12 +106,13 @@ def convert_checkpoint(pytorch_checkpoint_path, output_dir, args):
         download_repo_files("AstraMindAI/xttsv2", os.path.join(output_dir, "core_xttsv2"))
         print(f"Saved XTTSv2 weights to {xtts_path}")
         print(f"XTTSv2 weights: {list(xtts_weights.keys())}")
-
 def main():
     parser = argparse.ArgumentParser(description='Convert PyTorch checkpoint to SafeTensors format')
     parser.add_argument('checkpoint_path', type=str, help='Path to PyTorch checkpoint file')
     parser.add_argument('--output_dir', type=str, default=os.getcwd(),
                         help='Output directory (defaults to current working directory)')
+    parser.add_argument('--tokenizer_size', type=int, default=None,
+                        help='The tokenizer size, if not present will use 6681')
 
     args = parser.parse_args()
 
@@ -119,7 +122,7 @@ def main():
         return
 
     # Convert the checkpoint
-    convert_checkpoint(args.checkpoint_path, args.output_dir, args)
+    convert_checkpoint(args.checkpoint_path, args.output_dir, args.tokenizer_size, args)
 
 if __name__ == '__main__':
     main()
