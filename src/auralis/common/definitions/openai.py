@@ -1,10 +1,9 @@
 import base64
 from dataclasses import fields
 
-from openai import OpenAI
-from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import List, Optional, Dict, Any, Literal, Union
-from auralis.common.definitions.requests import TTSRequest
+from pydantic import BaseModel, Field, field_validator
+from typing import List, Optional, Dict, Any, Literal
+from auralis.common.definitions.dto.requests import TTSRequest
 
 
 class ChatCompletionMessage(BaseModel):
@@ -19,7 +18,7 @@ class VoiceChatCompletionRequest(BaseModel):
     messages: List[ChatCompletionMessage]
     speaker_files: List[str] = Field(..., description="List of base64-encoded audio files")
     modalities: List[Literal["text", "audio"]] = Field(
-        default=["text", "audio"],
+        default_facotry=lambda: ["text", "audio"],
         description="Output modalities to return"
     )
     openai_api_url: Optional[str] = Field(
