@@ -528,16 +528,6 @@ def main():
         help='Output directory (defaults to current working directory)'
     )
 
-    # Default paths for testing
-    import sys
-    if len(sys.argv) == 1:
-        # If no arguments provided, use default test paths
-        default_paths = [
-            '/home/astramind-giacomo/Downloads/coqui_2_0_0/model.pth',
-            '--output_dir', '/home/astramind-giacomo/Downloads/'
-        ]
-        sys.argv.extend(default_paths)
-
     args = parser.parse_args()
 
     # Verify input file exists
