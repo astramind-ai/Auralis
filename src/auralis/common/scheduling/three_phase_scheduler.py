@@ -3,7 +3,9 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Callable, Awaitable, Dict, List
-from auralis.common.definitions.scheduler import QueuedRequest, TaskState
+
+from auralis.common.definitions.scheduler.phase_outputs import SecondPhaseOutput, FirstPhaseOutput
+from auralis.common.definitions.scheduler.requests import QueuedRequest, TaskState
 from auralis.common.logging.logger import setup_logger
 
 
@@ -28,10 +30,10 @@ class ThreePhaseScheduler:
         self.queue_processor_tasks = []
         self.cancel_warning_issued = False
 
-        self.third_phase_sem = None
         self.active_generator_count = 0
         self.generator_count_lock = asyncio.Lock()
         self.cleanup_lock = asyncio.Lock()
+
 
     async def start(self):
         """Start the scheduler."""
@@ -39,7 +41,6 @@ class ThreePhaseScheduler:
             return
 
         self.request_queue = asyncio.Queue()
-        self.third_phase_sem = asyncio.Semaphore(self.third_phase_concurrency)
         self.is_running = True
         self.queue_processor_tasks = [
             asyncio.create_task(self._process_queue())
@@ -77,7 +78,8 @@ class ThreePhaseScheduler:
         """Process a request through all three phases."""
         try:
             self.logger.info(f"Starting request {request.id}")
-
+            # Phase 0: Preprocessing
+            request.input = await request.preprocssing_fn(request.input)
             # Phase 1: Initial processing - now returns a list of tasks
             first_phase_tasks = await self._handle_first_phase(request)
 
@@ -101,10 +103,11 @@ class ThreePhaseScheduler:
         try:
             tasks = [
                 asyncio.create_task(request.first_fn(request.input))
-            ]  # Ora puoi passare un singolo input a first_fn
+            ]
             return tasks
         except asyncio.TimeoutError:
             raise TimeoutError(f"First phase timeout after {self.request_timeout}s")
+
 
     async def _process_phases_concurrently(
         self, first_phase_tasks: List[asyncio.Task], request: QueuedRequest
@@ -115,14 +118,14 @@ class ThreePhaseScheduler:
         request.generator_events = {}
         request.generators_count = 0
 
-        # Crea una lista di task per la seconda fase
+        # Create a list to store the second phase tasks
         second_phase_tasks = []
         for first_task in first_phase_tasks:
             first_results = await asyncio.wait_for(
                 first_task, timeout=self.request_timeout
             )
             for first_result in first_results:
-                # Avvia la seconda fase per ogni risultato della prima fase
+
                 second_phase_task = asyncio.create_task(
                     self._start_second_phase(request, first_result)
                 )
@@ -133,11 +136,12 @@ class ThreePhaseScheduler:
                 await second_phase_task
         request.state = TaskState.PROCESSING_THIRD
 
-    async def _start_second_phase(self, request: QueuedRequest, first_result: Dict) -> None:
+    async def _start_second_phase(self, request: QueuedRequest, first_result: FirstPhaseOutput) -> None:
         """Starts the second phase processing for a given first phase result and starts the third phase."""
         try:
+
             second_phase_result = await asyncio.wait_for(
-                request.second_fn(**first_result), timeout=self.request_timeout
+                request.second_fn(**first_result.model_dump()), timeout=self.request_timeout
             )
 
             # Assegna un indice univoco al generatore
@@ -147,7 +151,6 @@ class ThreePhaseScheduler:
             # Inizializza il buffer e l'evento per questo generatore
             request.sequence_buffers[generator_idx] = []
             request.generator_events[generator_idx] = asyncio.Event()
-
             # Avvia la terza fase (il generatore)
             asyncio.create_task(
                 self._process_generator(request, second_phase_result, generator_idx)
@@ -166,24 +169,23 @@ class ThreePhaseScheduler:
             self, request: QueuedRequest, generator_input: Any, sequence_idx: int
     ):
         """Process a single generator in the third phase."""
-        async with self.third_phase_sem:
-            try:
-                await self._run_generator(request, generator_input, sequence_idx)
-            except asyncio.CancelledError:
-                self.logger.warning(
-                    f"Generator {sequence_idx} cancelled for request {request.id}"
-                )
-                raise
-            except Exception as e:
-                self._handle_generator_error(request, sequence_idx, e)
-            finally:
-                await self._cleanup_generator(request, sequence_idx)
+        try:
+            await self._run_generator(request, generator_input, sequence_idx)
+        except asyncio.CancelledError:
+            self.logger.warning(
+                f"Generator {sequence_idx} cancelled for request {request.id}"
+            )
+            raise
+        except Exception as e:
+            self._handle_generator_error(request, sequence_idx, e)
+        finally:
+            await self._cleanup_generator(request, sequence_idx)
 
     async def _run_generator(
-            self, request: QueuedRequest, generator_input: Any, sequence_idx: int
+            self, request: QueuedRequest, generator_input: SecondPhaseOutput, sequence_idx: int
     ):
         """Run a generator and collect its outputs."""
-        generator = request.third_fn(**generator_input)
+        generator = request.third_fn(**generator_input.model_dump())
         buffer = request.sequence_buffers[sequence_idx]
         self.logger.debug(
             f"Starting generator {sequence_idx} for request {request.id} with input {generator_input}"
@@ -287,6 +289,7 @@ class ThreePhaseScheduler:
     async def run(
             self,
             inputs: Any,
+            preprocssing_fn: Callable[[Any], Awaitable[Any]],
             first_phase_fn: Callable[[Any], Awaitable[Any]],
             second_phase_fn: Callable[[Any], Awaitable[Any]],
             third_phase_fn: Callable[[Any], AsyncGenerator],
@@ -299,6 +302,7 @@ class ThreePhaseScheduler:
         request = QueuedRequest(
             id=request_id,
             input=inputs,
+            preprocssing_fn=preprocssing_fn,
             first_fn=first_phase_fn,
             second_fn=second_phase_fn,
             third_fn=third_phase_fn,
