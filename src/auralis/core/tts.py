@@ -101,40 +101,11 @@ class TTS:
 
         Returns:
             dict: Dictionary containing parallel inputs and the original request.
-        """ # TODO use the actual engine to do this
-        conditioning_config = self.tts_engine.conditioning_config
+        """
         input_request.start_time = time.time()
 
-        audio_token_generators, speaker_embeddings, gpt_like_decoder_conditioning = None, None, None
+        parallel_inputs = await self.tts_engine.first_phase(input_request)
 
-        if conditioning_config.speaker_embeddings and conditioning_config.gpt_like_decoder_conditioning:
-            (audio_token_generators, requests_ids,
-             speaker_embeddings,
-             gpt_like_decoder_conditioning) = await self.tts_engine.first_phase(input_request)
-        elif conditioning_config.speaker_embeddings:
-            (audio_token_generators, requests_ids,
-             speaker_embeddings) = await self.tts_engine.first_phase(input_request)
-        elif conditioning_config.gpt_like_decoder_conditioning:
-            (audio_token_generators, requests_ids,
-             gpt_like_decoder_conditioning) = await self.tts_engine.first_phase(input_request)
-        else:
-            audio_token_generators, requests_ids = await self.tts_engine.first_phase(input_request)
-
-        parallel_inputs = [
-            {
-                'generator': gen,
-                'speaker_embedding': speaker_embeddings[i] if
-                speaker_embeddings is not None and isinstance(speaker_embeddings, list) else
-                speaker_embeddings if speaker_embeddings is not None else
-                None,
-                'multimodal_data': gpt_like_decoder_conditioning[i] if
-                gpt_like_decoder_conditioning is not None and isinstance(gpt_like_decoder_conditioning, list) else
-                gpt_like_decoder_conditioning if gpt_like_decoder_conditioning is not None else
-                None,
-                'request': input_request,
-            }
-            for i, gen in enumerate(audio_token_generators)
-        ]
         input_request.generators_count = len(parallel_inputs)
         input_request.sequence_buffers = {i: [] for i in range(input_request.generators_count)}
         input_request.completed_generators = 0
@@ -150,7 +121,6 @@ class TTS:
         Returns:
             AudioOutputGenerator: Generator yielding audio chunks.
         """
-        # TODO Add a resource based lock using the .second_phase_length
         try:
             item = await self.tts_engine.second_phase(*args, **kwargs)
             return item
