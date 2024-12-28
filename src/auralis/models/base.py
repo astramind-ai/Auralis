@@ -111,18 +111,6 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
 
 
     @property
-    def conditioning_config(self) -> ConditioningConfig:
-        """Get the model's conditioning configuration.
-
-        Returns:
-            ConditioningConfig: Configuration specifying which conditioning types are supported.
-
-        Raises:
-            NotImplementedError: Must be implemented by subclasses.
-        """
-        raise NotImplementedError
-
-    @property
     @abstractmethod
     def first_phase_resource_limit(self) -> int:
         raise NotImplementedError
