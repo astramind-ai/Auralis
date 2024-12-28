@@ -490,6 +490,11 @@ Memory usage:
 - ~ 5.3GB VRAM concurrency = 20
 
 
+## Contributions
+
+**Join Our Community!**
+
+We welcome and appreciate any contributions to our project! To ensure a smooth and efficient process, please take a moment to review our [Contribution Guideline](https://github.com/astramind-ai/Auralis/blob/main/CONTRIBUTING.md). By following these guidelines, you'll help us review and accept your contribution quickly. Thank you for your support!
 
 
 ## Learn More 🔭

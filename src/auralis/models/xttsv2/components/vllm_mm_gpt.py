@@ -222,16 +222,16 @@ def dummy_seq_data_for_xtts(
 ):
     """Create dummy sequence data for XTTS profiling."""
     # Calculate audio token space needed
-    conditioning_lenght = (32 # the conditioning perceiver output length in the sql (which is fixed)
+    conditioning_length = (32 # the conditioning perceiver output length in the sql (which is fixed)
                            +
                            1) # the start audio token
 
     return SequenceData.from_prompt_token_counts(
-        (1, conditioning_lenght * audio_count),
-        (0, seq_len - conditioning_lenght * audio_count)),{
+        (1, conditioning_length * audio_count),
+        (0, seq_len - conditioning_length * audio_count)),{
         "audio":
             consecutive_placeholder_ranges(num_items=audio_count,
-                                           item_size=conditioning_lenght)
+                                           item_size=conditioning_length)
     }
 
 
@@ -725,7 +725,7 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
         # used to check if all weights were loaded
         assert set(params_dict.keys()) - loaded_names == set(), \
             (f"Missing weights: {set(params_dict.keys()) - loaded_names}, "
-             f"this probably means you are using an incompatible model ")
+             f"this probably means you are using an incompatible model, \n\nyour model has this weights: {set(params_dict.keys())}")
 
 class GPT2Model(nn.Module):
 

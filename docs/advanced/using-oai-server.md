@@ -1,6 +1,3 @@
-
-from auralis import TTSOutput  
-  
 # Auralis Text-to-Speech API Documentation  
   
 Auralis is a text-to-speech system that provides two main functionalities: direct text-to-speech conversion and streaming text-to-speech generation integrated with language models. This documentation explains how to interact with both endpoints.  

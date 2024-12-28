@@ -76,7 +76,6 @@ async def chat_completions(request: VoiceChatCompletionRequest, authorization: O
             "Authorization": f"Bearer {openai_api_key}"
         }
 
-        tts_request.context_partial_function = await tts_engine.prepare_for_streaming_generation(tts_request)
         request_id = uuid.uuid4().hex
 
         # Validate modalities
@@ -152,8 +151,7 @@ async def chat_completions(request: VoiceChatCompletionRequest, authorization: O
             except Exception as e:
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
             finally:
-                if hasattr(tts_request, 'cleanup'):
-                    tts_request.cleanup()
+                pass
 
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
 

@@ -8,7 +8,7 @@ from huggingface_hub import snapshot_download
 from safetensors.torch import save_file
 
 
-def download_repo_files(repo_id, output_path, exclude_extensions=['.safetensors']):
+def download_repo_files(repo_id, output_path, exclude_extensions=['*.safetensors']):
     """
     Downloads all files from a GitHub repository except specified extensions.
 
@@ -56,14 +56,20 @@ def convert_checkpoint(pytorch_checkpoint_path, output_dir, args):
     ]
     ignore_in_check_components = ['mel_embedding.weight', 'mel_pos_embedding.emb.weight']
     # mel_emb -> wte.emb.weight, mel_pos_emb -> wpe.emb.weight
+    ignore_keys_from_training = {"torch_mel_spectrogram_style_encoder", "torch_mel_spectrogram_dvae", "dvae"}
 
     all_sub_str = gpt2_substrings + ignore_in_check_components
     # Separate weights based on substrings
     for key, tensor in checkpoint['model'].items():
         # Check if any GPT2 substring is in the key
+        if any(substring in key for substring in ignore_keys_from_training):
+            continue # skip training layers
+        key = key.replace('xtts.', '')
+
         is_gpt2_weight = any(substring in key for substring in all_sub_str)
 
         if is_gpt2_weight:
+
             if 'mel_embedding.weight' in key:
                 key = 'gpt.wte.weight'
             elif 'mel_pos_embedding.emb.weight' in key:

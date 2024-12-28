@@ -6,12 +6,21 @@ from torch.nn import functional as F
 from torch.nn.utils.parametrizations import weight_norm
 from torch.nn.utils.parametrize import remove_parametrizations
 
-from .......common.utilities import load_fsspec
+from auralis.common.utilities.audio_helpers_fn import load_fsspec
 
 LRELU_SLOPE = 0.1
 
 
 def get_padding(k, d):
+    """Calculate padding size for a convolutional layer.
+
+    Args:
+        k (int): Kernel size.
+        d (int): Dilation rate.
+
+    Returns:
+        int: Required padding size.
+    """
     return int((k * d - d) / 2)
 
 
@@ -286,9 +295,66 @@ class HifiganGenerator(torch.nn.Module):
             assert not self.training
             self.remove_weight_norm()
 
+    def estimate_receptive_field(self):
+        """
+        Estimate the receptive field of the model based on its configuration.
+
+        Steps:
+        1. Start from the initial conv (conv_pre) with kernel=7 (no dilation):
+           receptive_field = 7
+        2. For each upsampling stage:
+           - Multiply the current receptive field by the upsampling factor (since time length is scaled).
+           - Add the receptive field contribution from the associated MRF blocks at this scale.
+
+        The MRF block receptive field is calculated by summing the receptive fields of all resblocks at that scale.
+        Each resblock adds its own receptive field based on the dilations and kernel sizes.
+
+        Note: This is a heuristic estimation assuming that the resblocks are sequentially affecting the receptive field.
+        """
+
+        # Start from conv_pre: kernel_size=7, dilation=1
+        # Receptive field increment = (7 - 1) * 1 = 6
+        # Since we talk about total receptive field size, let's consider receptive_field as the number of frames.
+        # Here we can say receptive_field = 7 (the number of frames covered by kernel=7)
+        receptive_field = 7
+
+        idx = 0
+        for i, up_factor in enumerate(self.upsample_factors):
+            # After upsampling, the receptive field scales
+            receptive_field = receptive_field * up_factor
+
+            # Now add the contribution of the MRF blocks at this scale
+            # We have num_kernels blocks per scale
+            scale_rf = 0
+            for j in range(self.num_kernels):
+                block = self.resblocks[idx]
+                idx += 1
+                scale_rf = max(scale_rf, block.receptive_field())  # Take max since they are parallel and merged
+
+            # The MRF blocks process after upsampling, so we add that receptive field increment.
+            # Since these blocks are in series at the same scale (averaged), we approximate by adding them.
+            # Actually, they are parallel and then averaged. The effective RF should consider the largest block.
+            # We'll consider just the largest one for a safer overestimate.
+            receptive_field += scale_rf
+
+        return receptive_field
+
 
 class SELayer(nn.Module):
+    """Squeeze-and-Excitation layer for channel-wise attention.
+    
+    This layer implements the Squeeze-and-Excitation mechanism that adaptively
+    recalibrates channel-wise feature responses by explicitly modeling
+    interdependencies between channels.
+    """
+
     def __init__(self, channel, reduction=8):
+        """Initialize SE layer.
+
+        Args:
+            channel (int): Number of input channels.
+            reduction (int, optional): Channel reduction factor. Defaults to 8.
+        """
         super(SELayer, self).__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Sequential(
@@ -299,16 +365,38 @@ class SELayer(nn.Module):
         )
 
     def forward(self, x):
+        """Apply channel-wise attention.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape [B, C, T].
+
+        Returns:
+            torch.Tensor: Channel-wise scaled tensor.
+        """
         y = self.avg_pool(x).view(x.size(0), x.size(1))
         y = self.fc(y).view(x.size(0), x.size(1), 1, 1)
-        x = x * y
-        return x
+        return x * y
 
 
 class SEBasicBlock(nn.Module):
+    """Basic ResNet block with Squeeze-and-Excitation.
+    
+    This block combines residual connections with SE attention for improved
+    feature extraction.
+    """
+
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, reduction=8):
+        """Initialize SE-ResNet block.
+
+        Args:
+            inplanes (int): Number of input channels.
+            planes (int): Number of output channels.
+            stride (int, optional): Stride for convolution. Defaults to 1.
+            downsample (nn.Module, optional): Downsampling layer. Defaults to None.
+            reduction (int, optional): SE reduction factor. Defaults to 8.
+        """
         super(SEBasicBlock, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
@@ -319,6 +407,14 @@ class SEBasicBlock(nn.Module):
         self.downsample = downsample
 
     def forward(self, x):
+        """Process input through SE-ResNet block.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            torch.Tensor: Processed tensor.
+        """
         residual = x
 
         x = self.conv1(x)
@@ -356,12 +452,31 @@ def set_init_dict(model_dict, checkpoint_state, c):
 
 
 class PreEmphasis(nn.Module):
+    """Pre-emphasis filter for audio processing.
+    
+    Applies pre-emphasis filtering to the input audio signal to enhance
+    high-frequency components.
+    """
+
     def __init__(self, coefficient=0.97):
+        """Initialize pre-emphasis filter.
+
+        Args:
+            coefficient (float, optional): Pre-emphasis coefficient. Defaults to 0.97.
+        """
         super().__init__()
         self.coefficient = coefficient
         self.register_buffer("filter", torch.tensor([-self.coefficient, 1.0], dtype=torch.float32).view(1, 1, -1))
 
     def forward(self, x):
+        """Apply pre-emphasis filtering.
+
+        Args:
+            x (torch.Tensor): Input audio tensor.
+
+        Returns:
+            torch.Tensor: Pre-emphasized audio.
+        """
         assert len(x.size()) == 2
 
         x = torch.nn.functional.pad(x.unsqueeze(1), (1, 0), "reflect")
@@ -370,7 +485,11 @@ class PreEmphasis(nn.Module):
 
 
 class ResNetSpeakerEncoder(nn.Module):
-    """This is copied from 🐸TTS to remove it from the dependencies."""
+    """ResNet-based speaker encoder for voice conversion.
+    
+    This module extracts speaker embeddings from audio using a modified ResNet
+    architecture with optional attentive statistical pooling.
+    """
 
     # pylint: disable=W0102
     def __init__(
@@ -384,6 +503,18 @@ class ResNetSpeakerEncoder(nn.Module):
         use_torch_spec=False,
         audio_config=None,
     ):
+        """Initialize speaker encoder.
+
+        Args:
+            input_dim (int, optional): Input feature dimension. Defaults to 64.
+            proj_dim (int, optional): Projection dimension. Defaults to 512.
+            layers (List[int], optional): Number of layers in each block. Defaults to [3,4,6,3].
+            num_filters (List[int], optional): Number of filters in each block. Defaults to [32,64,128,256].
+            encoder_type (str, optional): Type of encoder ("ASP" or "SAP"). Defaults to "ASP".
+            log_input (bool, optional): Whether to apply log to input. Defaults to False.
+            use_torch_spec (bool, optional): Whether to use torch spectrogram. Defaults to False.
+            audio_config (dict, optional): Audio processing configuration. Defaults to None.
+        """
         super(ResNetSpeakerEncoder, self).__init__()
 
         self.encoder_type = encoder_type
@@ -471,15 +602,14 @@ class ResNetSpeakerEncoder(nn.Module):
         return out
 
     def forward(self, x, l2_norm=False):
-        """Forward pass of the model.
+        """Extract speaker embeddings from input features.
 
         Args:
-            x (Tensor): Raw waveform signal or spectrogram frames. If input is a waveform, `torch_spec` must be `True`
-                to compute the spectrogram on-the-fly.
-            l2_norm (bool): Whether to L2-normalize the outputs.
+            x (torch.Tensor): Input features.
+            l2_norm (bool, optional): Whether to apply L2 normalization. Defaults to False.
 
-        Shapes:
-            - x: :math:`(N, 1, T_{in})` or :math:`(N, D_{spec}, T_{in})`
+        Returns:
+            torch.Tensor: Speaker embeddings.
         """
         x.squeeze_(1)
         # if you torch spec compute it otherwise use the mel spec computed by the AP
@@ -562,6 +692,13 @@ class ResNetSpeakerEncoder(nn.Module):
 
 
 class HifiDecoder(torch.nn.Module):
+    """HiFi-GAN based decoder for high-quality speech synthesis.
+    
+    This module converts mel-spectrograms or other acoustic features into
+    high-fidelity waveforms using a HiFi-GAN architecture with optional
+    speaker conditioning.
+    """
+
     def __init__(
         self,
         input_sample_rate=22050,
@@ -586,6 +723,24 @@ class HifiDecoder(torch.nn.Module):
             "num_mels": 64,
         },
     ):
+        """Initialize HiFi decoder.
+
+        Args:
+            input_sample_rate (int, optional): Input sampling rate. Defaults to 22050.
+            output_sample_rate (int, optional): Output sampling rate. Defaults to 24000.
+            output_hop_length (int, optional): Output hop length. Defaults to 256.
+            ar_mel_length_compression (int, optional): Autoregressive compression factor. Defaults to 1024.
+            decoder_input_dim (int, optional): Input dimension for decoder. Defaults to 1024.
+            resblock_type_decoder (str, optional): Type of residual blocks. Defaults to "1".
+            resblock_dilation_sizes_decoder (List[List[int]], optional): Dilation sizes for residual blocks.
+            resblock_kernel_sizes_decoder (List[int], optional): Kernel sizes for residual blocks.
+            upsample_rates_decoder (List[int], optional): Upsampling rates.
+            upsample_initial_channel_decoder (int, optional): Initial number of channels.
+            upsample_kernel_sizes_decoder (List[int], optional): Kernel sizes for upsampling.
+            d_vector_dim (int, optional): Speaker embedding dimension. Defaults to 512.
+            cond_d_vector_in_each_upsampling_layer (bool, optional): Whether to condition each layer.
+            speaker_encoder_audio_config (dict, optional): Speaker encoder configuration.
+        """
         super().__init__()
         self.input_sample_rate = input_sample_rate
         self.output_sample_rate = output_sample_rate
@@ -621,17 +776,14 @@ class HifiDecoder(torch.nn.Module):
         return next(self.parameters()).device
 
     def forward(self, latents, g=None):
-        """
+        """Generate waveform from latent features.
+
         Args:
-            x (Tensor): feature input tensor (GPT latent).
-            g (Tensor): global conditioning input tensor.
+            latents (torch.Tensor): Input latent features.
+            g (torch.Tensor, optional): Speaker embedding. Defaults to None.
 
         Returns:
-            Tensor: output waveform.
-
-        Shapes:
-            x: [B, C, T]
-            Tensor: [B, 1, T]
+            torch.Tensor: Generated waveform.
         """
 
         z = torch.nn.functional.interpolate(
@@ -654,21 +806,27 @@ class HifiDecoder(torch.nn.Module):
 
     @torch.no_grad()
     def inference(self, c, g):
-        """
+        """Generate waveform in inference mode.
+
         Args:
-            x (Tensor): feature input tensor (GPT latent).
-            g (Tensor): global conditioning input tensor.
+            c (torch.Tensor): Input features.
+            g (torch.Tensor): Speaker embedding.
 
         Returns:
-            Tensor: output waveform.
-
-        Shapes:
-            x: [B, C, T]
-            Tensor: [B, 1, T]
+            torch.Tensor: Generated waveform.
         """
         return self.forward(c, g=g)
 
     def load_checkpoint(self, checkpoint_path, eval=False):  # pylint: disable=unused-argument, redefined-builtin
+        """Load model checkpoint.
+
+        Args:
+            checkpoint_path (str): Path to checkpoint file.
+            eval (bool, optional): Whether to set model to eval mode. Defaults to False.
+
+        Returns:
+            dict: Loaded checkpoint state.
+        """
         state = load_fsspec(checkpoint_path, map_location=torch.device("cpu"))
         # remove unused keys
         state = state["model"]
