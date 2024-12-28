@@ -1,4 +1,5 @@
 import asyncio
+import os
 from collections import OrderedDict
 from functools import wraps
 from typing import TypeVar, Callable, ParamSpec, Awaitable, Any, List
@@ -8,9 +9,9 @@ R = TypeVar('R')
 
 
 class AsyncLRUCache:
-    def __init__(self, max_size: int = 128):
-        self.max_size = max_size
-        self.cache: OrderedDict[str, Any] = OrderedDict()
+    def __init__(self):
+        self.max_size = os.environ.get("AURALIS_MAX_CACHE_SIZE", 128)
+        self.cache: OrderedDict[int, Any] = OrderedDict()
         self.lock = asyncio.Lock()
 
     def __call__(self, func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
