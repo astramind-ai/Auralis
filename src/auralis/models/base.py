@@ -43,6 +43,15 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
     """
 
     @abstractmethod
+    async def text_preprocessing(self,  request: TTSRequest) -> TTSRequest:
+        """
+        This phase preprocesses the input into the expected format for the model.
+        """
+        # The rationale is that like this we can base the lock on an actual value (i.e. token count)
+        # instead of a generic one(text length)
+        raise NotImplementedError
+
+    @abstractmethod
     async def first_phase(
             self,
             request: TTSRequest,
@@ -107,22 +116,6 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
         Raises:
             NotImplementedError: Must be implemented by subclasses.
         """
-        raise NotImplementedError
-
-
-    @property
-    @abstractmethod
-    def first_phase_resource_limit(self) -> int:
-        raise NotImplementedError
-
-    @property
-    @abstractmethod
-    def second_phase_resource_limit(self) -> int:
-        raise NotImplementedError
-
-    @property
-    @abstractmethod
-    def third_phase_resource_limit(self) -> int:
         raise NotImplementedError
 
 
@@ -234,3 +227,4 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
             torch.cuda.synchronize()
             await asyncio.sleep(0.1)
             torch.cuda.empty_cache()
+
