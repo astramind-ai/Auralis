@@ -4,18 +4,16 @@ import logging
 import os
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
-from functools import partial
-from typing import AsyncGenerator, Optional, Dict, Union, Generator, List
+from typing import AsyncGenerator, Optional, Union, Generator, List, Any
 
 from huggingface_hub import hf_hub_download
 
 from auralis.common.logging.logger import setup_logger, set_vllm_logging_level
-from auralis.common.definitions.output import TTSOutput
-from auralis.common.definitions.requests import TTSRequest
-from auralis.common.metrics.performance import track_generation
-from auralis.common.scheduling.two_phase_scheduler import TwoPhaseScheduler
-from auralis.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
+from auralis.common.definitions.dto.output import TTSOutput
+from auralis.common.definitions.dto.requests import TTSRequest
+from auralis.common.scheduling.three_phase_scheduler import ThreePhaseScheduler
+from auralis.models.base import BaseAsyncTTSEngine
+
 
 class TTS:
     """A high-performance text-to-speech engine optimized for inference speed.
@@ -33,7 +31,7 @@ class TTS:
         """
         set_vllm_logging_level(vllm_logging_level)
 
-        self.scheduler: Optional[TwoPhaseScheduler] = TwoPhaseScheduler(scheduler_max_concurrency)
+        self.scheduler: Optional[ThreePhaseScheduler] = ThreePhaseScheduler(scheduler_max_concurrency)
         self.tts_engine: Optional[BaseAsyncTTSEngine] = None
         self.concurrency = scheduler_max_concurrency
         self.max_vllm_memory: Optional[int] = None
@@ -86,55 +84,41 @@ class TTS:
 
         self.tts_engine = self.loop.run_until_complete(_load_model()) # to start form the correct loop
 
+        self.scheduler.start_locks(
+            first_resource_limit=self.tts_engine.first_phase_resource_limit,
+            second_resource_limit=self.tts_engine.second_phase_resource_limit,
+            third_resource_limit=self.tts_engine.third_phase_resource_limit
+        )
+
         return self
 
-    async def prepare_for_streaming_generation(self, request: TTSRequest):
-        """Prepare conditioning for streaming generation.
-
-        Args:
-            request (TTSRequest): The TTS request containing speaker files.
-
-        Returns:
-            Partial function with prepared conditioning for generation.
-        """
-        conditioning_config = self.tts_engine.conditioning_config
-        if conditioning_config.speaker_embeddings or conditioning_config.gpt_like_decoder_conditioning:
-            gpt_cond_latent, speaker_embeddings = await self.tts_engine.get_audio_conditioning(request.speaker_files)
-            return partial(self.tts_engine.get_generation_context,
-                           gpt_cond_latent=gpt_cond_latent,
-                           speaker_embeddings=speaker_embeddings)
-
-    async def _prepare_generation_context(self, input_request: TTSRequest):
-        """Prepare the generation context for the first phase of speech synthesis.
+    async def _phase_1_prepare_context(self, input_request: TTSRequest):
+        """Phase 1: Prepare the generation context (text to tokens, conditioning).
+           This happens sequentially.
 
         Args:
             input_request (TTSRequest): The TTS request to process.
 
         Returns:
             dict: Dictionary containing parallel inputs and the original request.
-        """
+        """ # TODO use the actual engine to do this
         conditioning_config = self.tts_engine.conditioning_config
         input_request.start_time = time.time()
-        if input_request.context_partial_function:
+
+        audio_token_generators, speaker_embeddings, gpt_like_decoder_conditioning = None, None, None
+
+        if conditioning_config.speaker_embeddings and conditioning_config.gpt_like_decoder_conditioning:
             (audio_token_generators, requests_ids,
              speaker_embeddings,
-             gpt_like_decoder_conditioning) = \
-                await input_request.context_partial_function(input_request)
+             gpt_like_decoder_conditioning) = await self.tts_engine.first_phase(input_request)
+        elif conditioning_config.speaker_embeddings:
+            (audio_token_generators, requests_ids,
+             speaker_embeddings) = await self.tts_engine.first_phase(input_request)
+        elif conditioning_config.gpt_like_decoder_conditioning:
+            (audio_token_generators, requests_ids,
+             gpt_like_decoder_conditioning) = await self.tts_engine.first_phase(input_request)
         else:
-            audio_token_generators, speaker_embeddings, gpt_like_decoder_conditioning = None, None, None
-
-            if conditioning_config.speaker_embeddings and conditioning_config.gpt_like_decoder_conditioning:
-                (audio_token_generators, requests_ids,
-                 speaker_embeddings,
-                 gpt_like_decoder_conditioning) = await self.tts_engine.get_generation_context(input_request)
-            elif conditioning_config.speaker_embeddings:
-                (audio_token_generators, requests_ids,
-                 speaker_embeddings) = await self.tts_engine.get_generation_context(input_request)
-            elif conditioning_config.gpt_like_decoder_conditioning:
-                (audio_token_generators, requests_ids,
-                 gpt_like_decoder_conditioning) = await self.tts_engine.get_generation_context(input_request)
-            else:
-                audio_token_generators, requests_ids = await self.tts_engine.get_generation_context(input_request)
+            audio_token_generators, requests_ids = await self.tts_engine.first_phase(input_request)
 
         parallel_inputs = [
             {
@@ -151,49 +135,67 @@ class TTS:
             }
             for i, gen in enumerate(audio_token_generators)
         ]
+        input_request.generators_count = len(parallel_inputs)
+        input_request.sequence_buffers = {i: [] for i in range(input_request.generators_count)}
+        input_request.completed_generators = 0
 
-        return {
-            'parallel_inputs': parallel_inputs,
-            'request': input_request
-        }
+        return parallel_inputs
 
-    async def _process_single_generator(self, gen_input: Dict) -> AudioOutputGenerator:
-        """Process a single generator to produce speech output.
-
+    async def _phase_2_process_tokens(self, *args, **kwargs) -> AsyncGenerator[Any, None]:
+        """Phase 2: Process the audio tokens to produce the hidden states.
+           This happens in parallel
         Args:
-            gen_input (Dict): Dictionary containing generator and conditioning information.
-
+           args: Variable length argument list.
+           kwargs: Arbitrary keyword arguments.
         Returns:
             AudioOutputGenerator: Generator yielding audio chunks.
-
-        Raises:
-            Exception: If any error occurs during processing.
         """
+        # TODO Add a resource based lock using the .second_phase_length
         try:
-            async for chunk in self.tts_engine.process_tokens_to_speech(  # type: ignore
-                    generator=gen_input['generator'],
-                    speaker_embeddings=gen_input['speaker_embedding'],
-                    multimodal_data=gen_input['multimodal_data'],
-                    request=gen_input['request'],
-            ):
-                yield chunk
+            item = await self.tts_engine.second_phase(*args, **kwargs)
+            return item
         except Exception as e:
             raise e
 
-    @track_generation
-    async def _second_phase_fn(self, gen_input: Dict) -> AudioOutputGenerator:
-        """Second phase of speech generation: Convert tokens to speech.
+    async def _phase_3_collect_and_yield(self, *args, **kwargs) -> AsyncGenerator[Any, None]:
+        """Third and Final Phase: collect output from the previous phase and yield audio
+           This happens in parallel
+           Args:
+               args: Variable length argument list.
+               kwargs: Arbitrary keyword arguments.
+           Returns:
+                AsyncGenerator: generator yielding audio chunks
+        """
+        async for item in self.tts_engine.third_phase(*args, **kwargs):
+            yield item
+
+    async def _process_request(self, request: TTSRequest):
+        """Process a single TTS request through all three phases.
 
         Args:
-            gen_input (Dict): Dictionary containing generator and conditioning information.
+            request (TTSRequest): The TTS request to process.
 
-        Returns:
-            AudioOutputGenerator: Generator yielding audio chunks.
+        Yields:
+            AsyncGenerator[TTSOutput, None]: Asynchronous generator for audio output.
         """
-        async for chunk in self._process_single_generator(gen_input):
-            yield chunk
 
-    async def generate_speech_async(self, request: TTSRequest) -> Union[AsyncGenerator[TTSOutput, None], TTSOutput]:
+        try:
+
+            # Phase 1 & 2 & 3: Process audio tokens and generate waveforms in parallel
+            async for item in self.scheduler.run(
+                    inputs = request,
+                    request_id = request.request_id,
+                    first_phase_fn=self._phase_1_prepare_context,
+                    second_phase_fn = self._phase_2_process_tokens,
+                    third_phase_fn = self._phase_3_collect_and_yield
+                ):
+                   yield item
+        except Exception as e:
+            self.logger.error(f"Error processing request: {e}")
+            raise
+
+    async def generate_speech_async(self, request: TTSRequest) \
+            -> Union[AsyncGenerator[TTSOutput, None], TTSOutput]:
         """Generate speech asynchronously from text.
 
         Args:
@@ -210,12 +212,7 @@ class TTS:
         async def process_chunks():
             chunks = []
             try:
-                async for chunk in self.scheduler.run(
-                        inputs=request,
-                        request_id=request.request_id,
-                        first_phase_fn=self._prepare_generation_context,
-                        second_phase_fn=self._second_phase_fn
-                ):
+                async for chunk in self._process_request(request):
                     if request.stream:
                         yield chunk
                     chunks.append(chunk)
@@ -269,12 +266,7 @@ class TTS:
 
         async def process_subrequest(idx, sub_request, queue: Optional[asyncio.Queue] = None):
             chunks = []
-            async for chunk in self.scheduler.run(
-                    inputs=sub_request,
-                    request_id=sub_request.request_id,
-                    first_phase_fn=self._prepare_generation_context,
-                    second_phase_fn=self._second_phase_fn
-            ):
+            async for chunk in self._process_request(sub_request):
                 chunks.append(chunk)
                 if queue is not None:
                     await queue.put(chunk)
@@ -329,12 +321,7 @@ class TTS:
                     # For streaming, execute the async gen
                     async def process_stream():
                         try:
-                            async for chunk in self.scheduler.run(
-                                    inputs=sub_request,
-                                    request_id=sub_request.request_id,
-                                    first_phase_fn=self._prepare_generation_context,
-                                    second_phase_fn=self._second_phase_fn
-                            ):
+                            async for chunk in self._process_request(sub_request):
                                 yield chunk
                         except Exception as e:
                             self.logger.error(f"Error during streaming: {e}")
