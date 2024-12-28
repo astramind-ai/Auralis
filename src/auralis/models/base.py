@@ -1,46 +1,23 @@
+import asyncio
 from abc import ABC, abstractmethod
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncGenerator, List, Union, Tuple, Optional
+from typing import AsyncGenerator, List, Union, Optional
 
 import torch
 import torchaudio
 from dataclasses import dataclass
 
-from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo, nvmlDeviceGetCount
 from vllm import RequestOutput
 
-from auralis.common.definitions.output import TTSOutput
-from auralis.common.definitions.requests import TTSRequest
-
-Token = Union[int, List[int]]
+from auralis.common.definitions.dto.output import TTSOutput
+from auralis.common.definitions.dto.requests import TTSRequest
+from auralis.common.definitions.scheduler.phase_outputs import FirstPhaseOutput, SecondPhaseOutput
 
 AudioTokenGenerator = AsyncGenerator[RequestOutput, None]
 AudioOutputGenerator = AsyncGenerator[TTSOutput, None]
 
-SpeakerEmbeddings = torch.Tensor
-GPTLikeDecoderConditioning = torch.Tensor
-RequestsIds = List
 
-TokenGeneratorsAndPossiblyConditioning = Union[
-    Tuple[
-        List[AudioTokenGenerator],
-        RequestsIds,
-        SpeakerEmbeddings,
-        Union[List[GPTLikeDecoderConditioning], GPTLikeDecoderConditioning]
-    ],
-    Tuple[
-        List[AudioTokenGenerator],
-        RequestsIds,
-        SpeakerEmbeddings
-    ],
-    Tuple[
-        List[AudioTokenGenerator],
-        RequestsIds,
-        GPTLikeDecoderConditioning
-    ],
-    List[AudioTokenGenerator],
-    RequestsIds
-    ]
 
 @dataclass
 class ConditioningConfig:
@@ -66,10 +43,10 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
     """
 
     @abstractmethod
-    async def get_generation_context(
+    async def first_phase(
             self,
             request: TTSRequest,
-    ) -> TokenGeneratorsAndPossiblyConditioning:
+    ) -> List[FirstPhaseOutput]:
         """Get token generators and conditioning for audio generation.
 
         This method prepares the generation context by processing the input text and any
@@ -79,7 +56,7 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
             request (TTSRequest): The TTS request containing input text and optional speaker files.
 
         Returns:
-            TokenGeneratorsAndPossiblyConditioning: A tuple containing token generators and optional
+            List[TokenGeneratorsAndPossiblyConditioning]: A list of tuples containing token generators and optional
                 conditioning tensors (speaker embeddings and/or GPT conditioning).
 
         Raises:
@@ -88,32 +65,50 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
         raise NotImplementedError
 
     @abstractmethod
-    async def process_tokens_to_speech(
+    async def second_phase(
             self,
-            generator: AudioTokenGenerator,
-            speaker_embeddings: SpeakerEmbeddings,
-            multimodal_data: GPTLikeDecoderConditioning = None,
-            request: TTSRequest = None,
-    ) -> AudioOutputGenerator:
-        """Generate speech from tokens with optional conditioning.
+            *args, **kwargs
+    ) -> SecondPhaseOutput:
 
-        This method converts the generated tokens into speech waveforms, applying any
-        specified conditioning signals to control the voice characteristics.
+        """
+        Asynchronously generate speech tokens from input.
+
+        This abstract method defines the interface for converting input data, such as text or token generators,
+        into audio output tokens using optional conditioning signals like speaker embeddings or multimodal data.
 
         Args:
-            generator (AudioTokenGenerator): Token generator from the first phase.
-            speaker_embeddings (SpeakerEmbeddings): Speaker embeddings for voice cloning.
-            multimodal_data (GPTLikeDecoderConditioning, optional): GPT conditioning data.
-            request (TTSRequest, optional): Original TTS request for reference.
+            *args: Variable arguments, typically including token generators and optional conditioning tensors.
+            **kwargs: Keyword arguments, which may include additional context or configuration details.
 
         Returns:
-            AudioOutputGenerator: An async generator yielding TTSOutput objects containing
-                audio chunks.
+            AudioOutputGenerator: A generator yielding audio tokens as part of the speech synthesis process.
 
         Raises:
             NotImplementedError: Must be implemented by subclasses.
         """
         raise NotImplementedError
+
+    async def third_phase(self, *args, **kwargs) -> AudioOutputGenerator:
+
+        """
+        Convert tokens to speech waveforms.
+
+        This method is the main entry point for asynchronous speech synthesis. It takes token
+        generators and optional conditioning signals as input and yields TTSOutput objects
+        containing audio chunks.
+
+        Args:
+            *args: Variable arguments, which should be token generators and optional conditioning tensors.
+            **kwargs: Keyword arguments, which should contain the original TTS request for reference.
+
+        Yields:
+            AsyncGenerator[TTSOutput, None]: A generator yielding TTSOutput objects containing audio chunks.
+
+        Raises:
+            NotImplementedError: Must be implemented by subclasses.
+        """
+        raise NotImplementedError
+
 
     @property
     def conditioning_config(self) -> ConditioningConfig:
@@ -126,6 +121,22 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
             NotImplementedError: Must be implemented by subclasses.
         """
         raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def first_phase_resource_limit(self) -> int:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def second_phase_resource_limit(self) -> int:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def third_phase_resource_limit(self) -> int:
+        raise NotImplementedError
+
 
     @property
     def device(self):
@@ -222,3 +233,16 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
         # Clip audio invalid values
         audio.clip_(-1, 1)
         return audio
+
+    @asynccontextmanager
+    async def cuda_memory_manager(self):
+        """Context manager for CUDA memory management.
+
+        Ensures proper allocation and deallocation of CUDA memory during processing.
+        """
+        try:
+            yield
+        finally:
+            torch.cuda.synchronize()
+            await asyncio.sleep(0.1)
+            torch.cuda.empty_cache()
