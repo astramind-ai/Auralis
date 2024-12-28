@@ -84,12 +84,6 @@ class TTS:
 
         self.tts_engine = self.loop.run_until_complete(_load_model()) # to start form the correct loop
 
-        self.scheduler.start_locks(
-            first_resource_limit=self.tts_engine.first_phase_resource_limit,
-            second_resource_limit=self.tts_engine.second_phase_resource_limit,
-            third_resource_limit=self.tts_engine.third_phase_resource_limit
-        )
-
         return self
 
     async def _phase_1_prepare_context(self, input_request: TTSRequest):
@@ -155,6 +149,7 @@ class TTS:
             async for item in self.scheduler.run(
                     inputs = request,
                     request_id = request.request_id,
+                    preprocssing_fn=self.tts_engine.text_preprocessing,
                     first_phase_fn=self._phase_1_prepare_context,
                     second_phase_fn = self._phase_2_process_tokens,
                     third_phase_fn = self._phase_3_collect_and_yield
