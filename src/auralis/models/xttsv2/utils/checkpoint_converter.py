@@ -27,8 +27,16 @@ def analyze_model_architecture(model_state: Dict[str, torch.Tensor]) -> Dict[str
     max_layer = -1
     for key in model_state.keys():
         if 'gpt.gpt.h.' in key and 'attn.c_attn.weight' in key:
-            layer_num = int(key.split('.')[3])
-            max_layer = max(max_layer, layer_num)
+            # Split by dots and look for the number after 'h'
+            parts = key.split('.')
+            for i, part in enumerate(parts):
+                if part == 'h' and i + 1 < len(parts):
+                    try:
+                        layer_num = int(parts[i + 1])
+                        max_layer = max(max_layer, layer_num)
+                    except ValueError:
+                        continue
+    
     architecture['num_hidden_layers'] = max_layer + 1
 
     # Analyze attention structure from weight dimensions
