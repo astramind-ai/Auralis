@@ -3,7 +3,7 @@ from typing import List, Optional
 import torch
 from vllm import SamplingParams
 
-from auralis.models.xttsv2.components.vllm.hidden_state_collector import HiddenStatesCollector
+from auralis.models.xttsv2.components.vllm.hidden_state_collector import HiddenStatesCollector, SyncCollectorWrapper
 
 
 class ExtendedSamplingParams(SamplingParams, kw_only=True):
@@ -18,7 +18,7 @@ class ExtendedSamplingParams(SamplingParams, kw_only=True):
             hidden states during generation.
         request_id (Optional[str]): Unique identifier for the generation request.
     """
-    hidden_state_collector: Optional[HiddenStatesCollector] = None
+    hidden_state_collector: Optional[SyncCollectorWrapper] = None
     request_id: Optional[str] = None
 
 

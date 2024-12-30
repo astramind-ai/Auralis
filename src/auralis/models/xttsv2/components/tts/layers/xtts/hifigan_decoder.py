@@ -6,7 +6,7 @@ from torch.nn import functional as F
 from torch.nn.utils.parametrizations import weight_norm
 from torch.nn.utils.parametrize import remove_parametrizations
 
-from .......common.utilities import load_fsspec
+from auralis.common.utilities.audio_helpers_fn import load_fsspec
 
 LRELU_SLOPE = 0.1
 

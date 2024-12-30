@@ -15,6 +15,7 @@ import json
 from functools import lru_cache
 from dataclasses import asdict, field
 
+import torch
 from cachetools import LRUCache
 
 
@@ -69,7 +70,7 @@ def cached_processing(maxsize=128):
 
     return decorator
 
-from auralis.common.definitions.enhancer import EnhancedAudioProcessor, AudioPreprocessingConfig
+from auralis.common.utilities.enhancer import EnhancedAudioProcessor, AudioPreprocessingConfig
 
 SupportedLanguages = Literal[
         "en",
@@ -165,6 +166,9 @@ class TTSRequest:
     text: Union[AsyncGenerator[str, None], str, List[str]]
 
     speaker_files: Union[Union[str,List[str]], Union[bytes,List[bytes]]]
+
+    tokenized_text: Union[List[torch.Tensor], List[int]] = None
+
     context_partial_function: Optional[Callable] = None
 
     start_time: Optional[float] = None
@@ -209,6 +213,13 @@ class TTSRequest:
         """
         if self.language == 'auto':
             self.language = get_language(self.text)
+
+    @property
+    def length(self):
+        if self.tokenized_text is None:
+            return 0
+        return sum(t.shape[-1] for t in self.tokenized_text)
+
 
     @cached_processing()
     def preprocess_audio(self, audio_source: Union[str, bytes], audio_config: AudioPreprocessingConfig) -> str:
