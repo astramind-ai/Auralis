@@ -6,7 +6,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from typing import AsyncGenerator, Optional, Dict, Union, Generator, List
+from typing import AsyncGenerator, Optional, Dict, Union, Generator, List, Any
 
 from huggingface_hub import hf_hub_download
 
@@ -34,7 +34,7 @@ class TTS:
         set_vllm_logging_level(vllm_logging_level)
 
         self.scheduler: Optional[TwoPhaseScheduler] = TwoPhaseScheduler(scheduler_max_concurrency)
-        self.tts_engine: Optional[BaseAsyncTTSEngine] = None
+        self.tts_engine: Optional[asyncio.Task] = None
         self.concurrency = scheduler_max_concurrency
         self.max_vllm_memory: Optional[int] = None
         self.logger = setup_logger(__file__)
@@ -84,11 +84,11 @@ class TTS:
         async def _load_model():
             return MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
 
-        self.tts_engine = self.loop.run_until_complete(_load_model()) # to start form the correct loop
-
+        self.tts_engine = self.loop.create_task(_load_model()) # to start form the correct loop
         return self
 
-    async def prepare_for_streaming_generation(self, request: TTSRequest):
+
+    async def prepare_for_streaming_generation(self, request: TTSRequest) -> partial:
         """Prepare conditioning for streaming generation.
 
         Args:
@@ -97,14 +97,19 @@ class TTS:
         Returns:
             Partial function with prepared conditioning for generation.
         """
-        conditioning_config = self.tts_engine.conditioning_config
+        if self.tts_engine is None:
+            raise ValueError("TTS engine not loaded, use .from_pretrained()")
+        tts_engine: BaseAsyncTTSEngine = await self.tts_engine # to make type checkers happy
+        conditioning_config = tts_engine.conditioning_config
         if conditioning_config.speaker_embeddings or conditioning_config.gpt_like_decoder_conditioning:
-            gpt_cond_latent, speaker_embeddings = await self.tts_engine.get_audio_conditioning(request.speaker_files)
-            return partial(self.tts_engine.get_generation_context,
+            gpt_cond_latent, speaker_embeddings = await tts_engine.get_audio_conditioning(request.speaker_files)
+            return partial(tts_engine.get_generation_context,
                            gpt_cond_latent=gpt_cond_latent,
                            speaker_embeddings=speaker_embeddings)
+        return None
 
-    async def _prepare_generation_context(self, input_request: TTSRequest):
+
+    async def _prepare_generation_context(self, input_request: TTSRequest) -> Dict[str,Any]:
         """Prepare the generation context for the first phase of speech synthesis.
 
         Args:
@@ -113,7 +118,10 @@ class TTS:
         Returns:
             dict: Dictionary containing parallel inputs and the original request.
         """
-        conditioning_config = self.tts_engine.conditioning_config
+        if self.tts_engine is None:
+            raise ValueError("TTS engine not loaded, use .from_pretrained()")
+        tts_engine: BaseAsyncTTSEngine = await self.tts_engine # to make type checkers happy
+        conditioning_config = tts_engine.conditioning_config
         input_request.start_time = time.time()
         if input_request.context_partial_function:
             (audio_token_generators, requests_ids,
@@ -126,15 +134,15 @@ class TTS:
             if conditioning_config.speaker_embeddings and conditioning_config.gpt_like_decoder_conditioning:
                 (audio_token_generators, requests_ids,
                  speaker_embeddings,
-                 gpt_like_decoder_conditioning) = await self.tts_engine.get_generation_context(input_request)
+                 gpt_like_decoder_conditioning) = await tts_engine.get_generation_context(input_request)
             elif conditioning_config.speaker_embeddings:
                 (audio_token_generators, requests_ids,
-                 speaker_embeddings) = await self.tts_engine.get_generation_context(input_request)
+                 speaker_embeddings) = await tts_engine.get_generation_context(input_request)
             elif conditioning_config.gpt_like_decoder_conditioning:
                 (audio_token_generators, requests_ids,
-                 gpt_like_decoder_conditioning) = await self.tts_engine.get_generation_context(input_request)
+                 gpt_like_decoder_conditioning) = await tts_engine.get_generation_context(input_request)
             else:
-                audio_token_generators, requests_ids = await self.tts_engine.get_generation_context(input_request)
+                audio_token_generators, requests_ids = await tts_engine.get_generation_context(input_request)
 
         parallel_inputs = [
             {
@@ -170,7 +178,8 @@ class TTS:
             Exception: If any error occurs during processing.
         """
         try:
-            async for chunk in self.tts_engine.process_tokens_to_speech(  # type: ignore
+            tts_engine: BaseAsyncTTSEngine = await self.tts_engine
+            async for chunk in tts_engine.process_tokens_to_speech(  # type: ignore
                     generator=gen_input['generator'],
                     speaker_embeddings=gen_input['speaker_embedding'],
                     multimodal_data=gen_input['multimodal_data'],
@@ -206,6 +215,8 @@ class TTS:
             RuntimeError: If instance was not created for async generation.
         """
         self._ensure_event_loop()
+        if self.tts_engine is None:
+            raise ValueError("TTS engine not loaded, use .from_pretrained()")
 
         async def process_chunks():
             chunks = []
