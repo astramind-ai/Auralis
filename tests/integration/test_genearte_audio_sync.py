@@ -1,11 +1,4 @@
-import asyncio
-import os.path
-
-import pytest
-import torch
-
-from auralis.common.definitions.requests import TTSRequest
-from auralis.models.xttsv2.XTTSv2 import XTTSv2Engine
+from auralis.common.definitions.dto.requests import TTSRequest
 from auralis.core.tts import TTS
 import pytest
 

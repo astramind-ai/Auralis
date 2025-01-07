@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import torch
@@ -6,7 +5,7 @@ import gc
 import asyncio
 from torch.profiler import profile, record_function, ProfilerActivity
 
-from auralis.common.definitions.requests import TTSRequest
+from auralis.common.definitions.dto.requests import TTSRequest
 from auralis.models.xttsv2.XTTSv2 import XTTSv2Engine
 from auralis.core.tts import TTS
 
