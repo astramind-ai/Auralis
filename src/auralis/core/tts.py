@@ -79,11 +79,11 @@ class TTS:
                 raise ValueError(f"Could not load model from {model_name_or_path} neither locally or online: {e}")
 
         # Run potential async operations within from_pretrained in the event loop
-        async def _load_model():
-            return MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
-
-        self.tts_engine = self.loop.run_until_complete(_load_model()) # to start form the correct loop
-
+        #async def _load_model():
+        #    return MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
+#
+        #self.tts_engine = self.loop.run_until_complete(_load_model()) # to start form the correct loop
+        self.tts_engine = MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
         return self
 
     async def _phase_1_prepare_context(self, input_request: TTSRequest):
@@ -265,25 +265,12 @@ class TTS:
             return TTSOutput.combine_outputs(complete_audio)
 
     def generate_speech(self, request: TTSRequest) -> Union[Generator[TTSOutput, None, None], TTSOutput]:
-        """Generate speech synchronously from text.
-
-        Args:
-            request (TTSRequest): The TTS request to process.
-
-        Returns:
-            Union[Generator[TTSOutput, None, None], TTSOutput]: Audio output, either streamed or complete.
-
-        Raises:
-            RuntimeError: If instance was created for async generation.
-        """
         self._ensure_event_loop()
         requests = self.split_requests(request)
 
         if request.stream:
-            # Streaming case
             def streaming_wrapper():
                 for sub_request in requests:
-                    # For streaming, execute the async gen
                     async def process_stream():
                         try:
                             async for chunk in self._process_request(sub_request):
@@ -292,11 +279,12 @@ class TTS:
                             self.logger.error(f"Error during streaming: {e}")
                             raise
 
-                    # Execute the async gen
                     generator = process_stream()
                     try:
                         while True:
-                            chunk = self.loop.run_until_complete(anext(generator))
+                            # We create a new task per request
+                            task = self.loop.create_task(anext(generator))
+                            chunk = self.loop.run_until_complete(task) if not self.loop.is_running() else task.result()
                             yield chunk
                     except StopAsyncIteration:
                         pass
@@ -304,7 +292,16 @@ class TTS:
             return streaming_wrapper()
         else:
             # Non streaming
-            return self.loop.run_until_complete(self._process_multiple_requests(requests))
+            async def _run():
+                return await self._process_multiple_requests(requests)
+
+            if self.loop.is_running():
+                # If the loop is running, use run_coroutine_threadsafe
+                future = asyncio.run_coroutine_threadsafe(_run(), self.loop)
+                return future.result()
+            else:
+                # If no loop is running, use run_until_complete
+                return self.loop.run_until_complete(_run())
 
     async def shutdown(self):
         """Shuts down the TTS engine and scheduler."""

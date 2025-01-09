@@ -3,7 +3,8 @@ import asyncio
 import torch
 import psutil
 import os
-from auralis import TTS, TTSRequest
+from auralis import TTS
+from auralis.common.definitions.dto.requests import TTSRequest
 
 
 @pytest.mark.asyncio
@@ -40,7 +41,7 @@ def test_memory_leak_tts(default_test_params):
 
     last_consumed_memory = torch.cuda.memory_allocated()
     prev_memory = last_consumed_memory
-    for _ in range(default_test_params['n_iterations_mem_leak']):  # 100 iterazioni
+    for _ in range(default_test_params['n_iterations_mem_leak']):  # 100 iterations
         prev_memory = last_consumed_memory
         result = tts.generate_speech(request)
         print(f"VRAM: {torch.cuda.memory_allocated() / 1024 / 1024 / 1024} GB")
