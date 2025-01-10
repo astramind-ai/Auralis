@@ -14,7 +14,8 @@ import torchaudio
 from ebooklib import epub
 from bs4 import BeautifulSoup
 
-from auralis import TTS, TTSRequest, TTSOutput, AudioPreprocessingConfig, setup_logger
+from auralis import TTS, TTSOutput, AudioPreprocessingConfig, setup_logger
+from auralis.common.definitions.dto.requests import TTSRequest
 
 logger = setup_logger(__file__)
 

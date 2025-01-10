@@ -490,6 +490,13 @@ Memory usage:
 - ~ 5.3GB VRAM concurrency = 20
 
 
+## Gradio
+
+[Gradio code](https://github.com/astramind-ai/Auralis/blob/main/examples/gradio_example.py)
+
+![Auralis](docs/img/gradio_exp.png)
+
+
 ## Contributions
 
 **Join Our Community!**
@@ -500,7 +507,7 @@ We welcome and appreciate any contributions to our project! To ensure a smooth a
 ## Learn More 🔭
 
 - [Technical Deep Dive](https://www.astramind.ai/post/auralis)
-- [Adding Custom Models](docs/ADDING_MODELS.md)
+- [Adding Custom Models](https://github.com/astramind-ai/Auralis/blob/main/docs/advanced/adding-models.md)
 
 ## License
 

@@ -1,12 +1,11 @@
 import asyncio
 import time
-
 import pytest
-
-from auralis import TTS, TTSRequest, TTSOutput
+from auralis import TTS,  TTSOutput
+from auralis.common.definitions.dto.requests import TTSRequest
 
 @pytest.mark.asyncio
-async def main(default_test_params):
+async def test(default_test_params):
     tts = TTS().from_pretrained(default_test_params['tts_model'], gpt_model=default_test_params['gpt_model'])
 
     # Crea multiple richieste parallele
@@ -51,7 +50,3 @@ async def main(default_test_params):
         print(f"Time to make {'streaming' if request.stream else 'non-streaming'} request {idx}: {ttfb[idx]-ttfb[0]:.2f}s")
 
     print("Combined output size: ", len(out[0].array))
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
