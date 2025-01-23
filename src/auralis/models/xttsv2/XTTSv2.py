@@ -31,7 +31,7 @@ from ...common.definitions.dto.requests import TTSRequest
 from ...common.definitions.scheduler.contexts import ConditioningContext, PhoneticContext, SpeechContext
 from ...common.definitions.types.generator import Tokens
 from ...common.logging.logger import setup_logger
-from ...common.utilities import wav_to_mel_cloning, load_audio
+from ...common.utilities.audio_helpers_fn import wav_to_mel_cloning, load_audio
 from ...common.vllm.hidden_state_collector import HiddenStatesCollector
 from ...common.vllm.hijack import ExtendedSamplingParams, LogitsRepetitionPenalizer
 
