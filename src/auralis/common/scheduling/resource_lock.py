@@ -1,26 +1,27 @@
 import asyncio
+import logging
 from asyncio import Lock, Condition
 from contextlib import asynccontextmanager
+
+from auralis.common.logging.logger import setup_logger
 
 
 class ResourceLock:
     """
-    Un lock asincrono che gestisce l’accesso concorrente a N risorse.
-    Utilizza internamente un `asyncio.Lock` e un `Condition` per
-    sincronizzare i vari acquisiti e rilasci.
+    An async resource-based lock.
     """
 
     def __init__(self, capacity: int):
-        if capacity <= 0:
-            raise ValueError("La capacità deve essere un intero positivo.")
 
+        self._currently_acquired = 0 #used for internal profiling
         self._capacity = capacity
         self.remaining = capacity
 
-        # Lock interno, diverso da 'self'
+        self.logger = setup_logger(__file__)
+        # internal lock
         self._lock = Lock()
 
-        # Condition che usa il lock interno
+        # Condition based on internal lock
         self._condition = Condition(self._lock)
 
     async def acquire(self, requested: int = 1) -> bool:
@@ -28,9 +29,9 @@ class ResourceLock:
         Acquisisce 'requested' risorse, se disponibili, altrimenti resta in attesa.
         """
         if not isinstance(requested, int) or requested <= 0:
-            raise ValueError("Il numero di risorse richieste deve essere un intero positivo.")
+            raise ValueError("Number of requested resources must be positive")
         if requested > self._capacity:
-            raise ValueError(f"Richiesta ({requested}) eccede la capacità massima ({self._capacity}).")
+            raise ValueError(f"Request ({requested}) exceeds maximum capacity ({self._capacity}).")
 
         async with self._condition:  # lock interno
             while self.remaining < requested:
@@ -40,13 +41,12 @@ class ResourceLock:
 
     async def acquire_nowait(self, requested: int = 1) -> bool:
         """
-        Tenta di acquisire le risorse richieste senza attendere.
-        Restituisce True se riesce, False altrimenti.
+        Try to acquire 'requested' resources without waiting.
         """
         if not isinstance(requested, int) or requested <= 0:
-            raise ValueError("Il numero di risorse richieste deve essere un intero positivo.")
+            raise ValueError("You must request at least one resource.")
         if requested > self._capacity:
-            raise ValueError(f"Richiesta ({requested}) eccede la capacità massima ({self._capacity}).")
+            raise ValueError(f"Request ({requested}) exceeds maximum capacity ({self._capacity}).")
 
         async with self._condition:
             if self.remaining < requested:
@@ -56,41 +56,41 @@ class ResourceLock:
 
     async def release(self, amount: int = 1) -> None:
         """
-        Rilascia 'amount' risorse tornando disponibili per altri.
+        Relase 'amount' resources.
         """
         if not isinstance(amount, int) or amount <= 0:
-            raise ValueError("Il numero di risorse rilasciate deve essere un intero positivo.")
+            raise ValueError("You must request at least one resource.")
 
         async with self._condition:
-            if self.remaining + amount > self._capacity:
-                raise ValueError(
-                    f"Non puoi rilasciare {amount} risorse: supereresti la capacità di {self._capacity}."
-                )
+
             self.remaining += amount
             self._condition.notify_all()
 
     @property
     def capacity(self) -> int:
-        """Ritorna la capacità totale del ResourceLock."""
+        """Returns the capacity of the resource lock."""
         return self._capacity
 
     @asynccontextmanager
     async def resources(self, amount: int):
         """
-        Context manager per acquisire e rilasciare automaticamente
-        un certo numero di risorse all'entrata e all'uscita dal blocco.
+        Context manager to acquire and release resources.
         """
         try:
             await self.acquire(amount)
+            self._currently_acquired += 1
+            self.logger.debug(f"Currently acquired: {self._currently_acquired}")
             yield self
         finally:
             await self.release(amount)
+            self.logger.debug(f"Currently acquired: {self._currently_acquired}")
+            self._currently_acquired -= 1
 
     async def __aenter__(self):
-        """Acquisisce di default 1 risorsa in un blocco async with."""
+        """acquire 1 resource in the enter."""
         await self.acquire(1)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Rilascia di default 1 risorsa all'uscita dal blocco."""
+        """Releases 1 resource in the exit."""
         await self.release(1)

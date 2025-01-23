@@ -88,11 +88,10 @@ class TTSOutput:
             hop_length=hop_length
         )
 
-        # Inverse STFT
+        # Inverse STFT without forcing length
         modified = librosa.istft(
             modified_stft,
-            hop_length=hop_length,
-            length=len(wav)
+            hop_length=hop_length
         )
 
         # Normalize to prevent clipping
